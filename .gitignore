@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage/
+.nyc_output/
+*.log
+.DS_Store
+*.txt
+
+# Root uppercase markdown (personal/local files)
+/[A-Z]*.md
+!/README.md
+!/CONTRIBUTING.md
+!/CHANGELOG.md
+!/LICENSE.md

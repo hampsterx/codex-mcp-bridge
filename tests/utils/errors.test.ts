@@ -1,0 +1,59 @@
+import { describe, it, expect } from "vitest";
+import { isRetryableError, checkErrorPatterns } from "../../src/utils/errors.js";
+
+describe("isRetryableError", () => {
+  it("returns false for exit code 0", () => {
+    expect(isRetryableError(0, "rate limit")).toBe(false);
+  });
+
+  it("returns false for empty stderr", () => {
+    expect(isRetryableError(1, "")).toBe(false);
+  });
+
+  it("detects rate limit text", () => {
+    expect(isRetryableError(1, "Error: rate limit exceeded")).toBe(true);
+  });
+
+  it("detects 429 status", () => {
+    expect(isRetryableError(1, "HTTP 429 Too Many Requests")).toBe(true);
+  });
+
+  it("detects quota text", () => {
+    expect(isRetryableError(1, "quota exceeded for today")).toBe(true);
+  });
+
+  it("detects rate_limit_exceeded", () => {
+    expect(isRetryableError(1, "rate_limit_exceeded")).toBe(true);
+  });
+
+  it("detects structured JSON error", () => {
+    const stderr = JSON.stringify({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+    expect(isRetryableError(1, stderr)).toBe(true);
+  });
+
+  it("returns false for unrelated errors", () => {
+    expect(isRetryableError(1, "file not found")).toBe(false);
+  });
+});
+
+describe("checkErrorPatterns", () => {
+  it("does not throw for exit code 0", () => {
+    expect(() => checkErrorPatterns(0, "api key invalid")).not.toThrow();
+  });
+
+  it("throws for auth errors", () => {
+    expect(() => checkErrorPatterns(1, "Invalid API key provided")).toThrow(
+      /authentication error/i,
+    );
+  });
+
+  it("throws for rate limit errors", () => {
+    expect(() => checkErrorPatterns(1, "Rate limit exceeded")).toThrow(
+      /rate limit/i,
+    );
+  });
+
+  it("does not throw for unrecognized errors", () => {
+    expect(() => checkErrorPatterns(1, "some other error")).not.toThrow();
+  });
+});
