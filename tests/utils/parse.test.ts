@@ -34,14 +34,34 @@ describe("parseCodexOutput", () => {
     expect(() => parseCodexOutput("", "")).toThrow("no output");
   });
 
-  it("parses JSONL events with thread_id", () => {
+  it("parses JSONL events from stdout with thread_id and agent message text", () => {
     const events = [
       JSON.stringify({ type: "thread.started", thread_id: "thread_abc123" }),
-      JSON.stringify({ type: "message.completed", content: "Review complete" }),
+      JSON.stringify({ type: "turn.started" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Review complete" },
+      }),
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } }),
     ].join("\n");
-    const result = parseCodexOutput("", events);
+    const result = parseCodexOutput(events, "");
     expect(result.threadId).toBe("thread_abc123");
     expect(result.response).toBe("Review complete");
+  });
+
+  it("extracts session id from stderr fallback output", () => {
+    const stderr = "session id: 019d5a9f-1234-5678-abcd-0123456789ab\nPlain response";
+    const result = parseCodexOutput("", stderr);
+    expect(result.threadId).toBe("019d5a9f-1234-5678-abcd-0123456789ab");
+    expect(result.response).toContain("Plain response");
+  });
+
+  it("preserves session id from stderr when response is plain text on stdout", () => {
+    const stdout = "The answer is 42";
+    const stderr = "session id: 019d5a9f-aaaa-bbbb-cccc-0123456789ab";
+    const result = parseCodexOutput(stdout, stderr);
+    expect(result.threadId).toBe("019d5a9f-aaaa-bbbb-cccc-0123456789ab");
+    expect(result.response).toBe("The answer is 42");
   });
 
   it("redacts API keys in output", () => {

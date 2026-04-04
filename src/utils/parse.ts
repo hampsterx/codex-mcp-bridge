@@ -34,21 +34,28 @@ export function redactSecrets(text: string): string {
 /**
  * Parse Codex CLI output.
  *
- * Codex CLI outputs primarily to stderr. With --json flag (0.115+), it emits
- * JSONL events including `thread.started` with thread_id.
+ * Codex CLI can emit JSONL events with --json. Current versions write those
+ * events to stdout and may still print session metadata to stderr.
  *
  * Strategy:
- * 1. Try JSONL event parsing from stderr (--json mode)
- * 2. Try stdout as JSON
- * 3. Try stderr as JSON
- * 4. Fall back to ANSI-stripped plain text from stdout, then stderr
- * 5. Error if both streams are empty
+ * 1. Try JSONL event parsing from stdout (--json mode primary path)
+ * 2. Try JSONL event parsing from stderr (fallback / older variants)
+ * 3. Try stdout as JSON
+ * 4. Try stderr as JSON
+ * 5. Fall back to ANSI-stripped plain text from stdout, then stderr
+ * 6. Error if both streams are empty
  */
 export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
   const cleanedStdout = redactSecrets(stripAnsi(stdout).trim());
   const cleanedStderr = redactSecrets(stripAnsi(stderr).trim());
 
-  // Try JSONL event parsing from stderr (Codex --json mode)
+  // Try JSONL event parsing from stdout (Codex --json mode primary path)
+  if (cleanedStdout.length > 0) {
+    const jsonlResult = tryParseJsonlEvents(cleanedStdout);
+    if (jsonlResult) return jsonlResult;
+  }
+
+  // Try JSONL event parsing from stderr as fallback
   if (cleanedStderr.length > 0) {
     const jsonlResult = tryParseJsonlEvents(cleanedStderr);
     if (jsonlResult) return jsonlResult;
@@ -84,14 +91,18 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
     }
   }
 
+  // Session ID fallback from stderr for non-JSON mode
+  const sessionMatch = cleanedStderr.match(/^session id:\s+([0-9a-f-]+)$/im);
+  const threadId = sessionMatch?.[1];
+
   // Plain text fallback from stdout
   if (cleanedStdout.length > 0) {
-    return { response: cleanedStdout };
+    return { response: cleanedStdout, threadId };
   }
 
-  // Plain text fallback from stderr (Codex outputs primarily to stderr)
+  // Plain text fallback from stderr
   if (cleanedStderr.length > 0) {
-    return { response: cleanedStderr };
+    return { response: cleanedStderr, threadId };
   }
 
   throw new Error("Codex CLI produced no output");
@@ -99,7 +110,7 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
 
 /**
  * Try to parse JSONL events from Codex CLI --json output.
- * Looks for thread.started (thread_id) and message events (response text).
+ * Looks for thread.started (thread_id) and item.completed agent messages.
  */
 function tryParseJsonlEvents(text: string): CodexOutput | null {
   const lines = text.split("\n").filter(Boolean);
@@ -119,27 +130,17 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
         threadId = event.thread_id;
       }
 
-      // Extract response text from message events
-      if (event.type === "message" && typeof event.content === "string") {
+      // Current CLI emits the final agent text on item.completed
+      if (event.type === "item.completed" && event.item && typeof event.item === "object") {
         hasKnownEvents = true;
-        responseParts.push(event.content);
-      }
-      // Also check for text delta events
-      if (event.type === "text_delta" && typeof event.text === "string") {
-        hasKnownEvents = true;
-        responseParts.push(event.text);
-      }
-      // Final message with full content
-      if (event.type === "message.completed" || event.type === "response.completed") {
-        hasKnownEvents = true;
-        if (typeof event.content === "string") {
-          responseParts.length = 0; // Replace deltas with final
-          responseParts.push(event.content);
+        const item = event.item as Record<string, unknown>;
+        if (item.type === "agent_message" && typeof item.text === "string") {
+          responseParts.push(item.text);
         }
-        if (typeof event.text === "string") {
-          responseParts.length = 0;
-          responseParts.push(event.text);
-        }
+      }
+
+      if (event.type === "turn.completed") {
+        hasKnownEvents = true;
       }
     } catch {
       // Not JSON, skip line
@@ -148,7 +149,7 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
 
   if (!hasKnownEvents) return null;
 
-  const response = responseParts.join("") || "(no response content in JSONL events)";
+  const response = responseParts.join("\n\n") || "(no response content in JSONL events)";
   return { response, threadId, raw: lines };
 }
 
