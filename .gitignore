@@ -10,6 +10,9 @@ coverage/
 .DS_Store
 *.txt
 
+# Local scripts (untracked)
+/switch-mcp.sh
+
 # Root uppercase markdown (personal/local files)
 /[A-Z]*.md
 !/README.md

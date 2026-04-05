@@ -12,6 +12,33 @@ MCP server that wraps [Codex CLI](https://github.com/openai/codex) as a subproce
 
 Works with any MCP-compatible client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code.
 
+## Do you need this?
+
+If you're in a terminal agent (Claude Code, Codex CLI, Gemini CLI) with shell access, call Codex CLI directly. It's faster, cheaper, and zero overhead:
+
+```bash
+# Review current branch vs main
+codex review --base main
+
+# Review uncommitted changes
+codex review --uncommitted
+
+# Review with custom focus
+codex review --base main "Focus on security and error handling"
+
+# From a worktree
+codex -C /path/to/worktree review --base main
+
+# General analysis
+codex exec "Analyze src/utils/parse.ts for edge cases"
+```
+
+**Use this MCP bridge instead when:**
+- Your client has no shell access (Cursor, Windsurf, Claude Desktop, VS Code)
+- You need structured output with JSON Schema validation (Codex CLI's `--json` has [known bugs](https://github.com/openai/codex/issues/16552))
+- You need automatic model fallback on quota exhaustion
+- You need concurrency management (max 3 parallel spawns, queuing)
+
 ## Quick Start
 
 ```bash
@@ -88,6 +115,22 @@ Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns 
 | `CODEX_FALLBACK_MODEL` | `o3` | Fallback on quota exhaustion. `none` to disable |
 | `CODEX_CLI_PATH` | `codex` | Path to Codex CLI binary |
 | `CODEX_MAX_CONCURRENT` | `3` | Max concurrent subprocess spawns |
+
+## Performance
+
+Each tool invocation spawns a fresh Codex CLI process. Codex CLI has minimal startup overhead (<100ms), so wall time is dominated by model inference.
+
+Approximate timings with `o4-mini` (Codex CLI default). Actual times vary with model load and network conditions.
+
+| Scenario | Typical time | Tokens in |
+|----------|-------------|-----------|
+| Trivial prompt ("pong") | 9-12s | 32K |
+| Quick review, small diff (1KB) | ~20s | 32K |
+| Quick review, medium diff (24KB) | ~35s | 38K |
+| Quick review, large diff (54KB) | ~40s | 47K |
+| Web search | ~17s | 36K |
+
+Inference time scales sub-linearly with diff size. The default timeouts (60-300s) are comfortable for typical workloads.
 
 ## Security
 

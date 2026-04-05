@@ -22,4 +22,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Session management for multi-turn conversations
 - Windows argument escaping support
 - CI/CD with GitHub Actions (lint, test, build on Node 18/20/22)
-- OIDC trusted publishing to npm
+- CI validation on tag push (manual npm publish with OTP)
