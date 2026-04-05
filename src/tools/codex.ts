@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { spawnCodex } from "../utils/spawn.js";
 import { parseCodexOutput } from "../utils/parse.js";
 import { checkErrorPatterns } from "../utils/errors.js";
@@ -97,17 +100,10 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
   const fileContents = textFiles.length > 0 ? await readFiles(textFiles, cwd) : [];
   let fullPrompt = assemblePrompt(prompt, fileContents);
 
-  // Add image instructions if present
-  if (imageNames.length > 0) {
-    const imagePart = imageNames.map((p) => `Read and analyze the image at: ${p}`).join("\n");
-    fullPrompt = `${fullPrompt}\n\n## Image Files\n\n${imagePart}`;
-  }
-
   fullPrompt = appendLengthLimit(fullPrompt, maxResponseLength);
 
   const useStdin = fullPrompt.length > STDIN_THRESHOLD || files.length > 0;
-  const hasImages = imageNames.length > 0;
-  const defaultTimeout = hasImages ? IMAGE_QUERY_TIMEOUT : 60_000;
+  const defaultTimeout = imageNames.length > 0 ? IMAGE_QUERY_TIMEOUT : 60_000;
   const effectiveTimeout = Math.min(timeout ?? defaultTimeout, HARD_TIMEOUT_CAP);
 
   // Check for session resume
@@ -119,72 +115,91 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
     }
   }
 
-  const { result, fallbackUsed, fallbackModel } = await withModelFallback(
-    model,
-    (m, t) => {
-      const args = buildArgs({
-        model: m,
-        sandbox: hasImages ? "full-auto" : sandbox,
-        reasoningEffort,
-        conversationId,
-        prompt: useStdin ? undefined : fullPrompt,
-      });
-      return spawnCodex({ args, cwd, stdin: useStdin ? fullPrompt : undefined, timeout: t });
-    },
-    effectiveTimeout,
-  );
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "codex-mcp-bridge-"));
+  const outputFile = path.join(tempDir, "response.txt");
 
-  const actualModel = fallbackUsed ? fallbackModel : model;
-  const includedFiles = fileContents.filter((f) => !f.skipped).map((f) => f.path);
-  const skippedFiles = [
-    ...fileContents.filter((f) => f.skipped).map((f) => `${f.path}: ${f.skipped}`),
-    ...skippedImages,
-  ];
+  try {
+    const { result, fallbackUsed, fallbackModel } = await withModelFallback(
+      model,
+      (m, t) => {
+        const args = buildArgs({
+          model: m,
+          sandbox,
+          reasoningEffort,
+          conversationId,
+          prompt: useStdin ? undefined : fullPrompt,
+          outputFile,
+          imagePaths: validImages.map((image) => image.resolved),
+        });
+        return spawnCodex({ args, cwd, stdin: useStdin ? fullPrompt : undefined, timeout: t });
+      },
+      effectiveTimeout,
+    );
 
-  if (result.timedOut) {
+    const actualModel = fallbackUsed ? fallbackModel : model;
+    const includedFiles = fileContents.filter((f) => !f.skipped).map((f) => f.path);
+    const skippedFiles = [
+      ...fileContents.filter((f) => f.skipped).map((f) => `${f.path}: ${f.skipped}`),
+      ...skippedImages,
+    ];
+
+    if (result.timedOut) {
+      return {
+        response: `Query timed out after ${effectiveTimeout / 1000}s. Try a simpler prompt or increase the timeout.`,
+        model: actualModel,
+        fallbackUsed: fallbackUsed || undefined,
+        filesIncluded: includedFiles,
+        filesSkipped: skippedFiles,
+        imagesIncluded: imageNames,
+        timedOut: true,
+      };
+    }
+
+    checkErrorPatterns(result.exitCode, result.stderr);
+
+    const parsed = parseCodexOutput(result.stdout, result.stderr);
+    const fileResponse = await readOutputFile(outputFile);
+
+    // Store session for resume if we got a thread ID
+    let outputSessionId = input.sessionId;
+    if (parsed.threadId && isValidSessionId(parsed.threadId)) {
+      const sessionId = input.sessionId ?? `codex-${Date.now()}`;
+      try {
+        sessionStore.set(sessionId, {
+          conversationId: parsed.threadId,
+          model: actualModel,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+        });
+        outputSessionId = sessionId;
+      } catch {
+        // Session storage is best-effort; continue without it
+      }
+    }
+
     return {
-      response: `Query timed out after ${effectiveTimeout / 1000}s. Try a simpler prompt or increase the timeout.`,
+      response: fileResponse ?? parsed.response,
       model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
+      sessionId: outputSessionId,
+      conversationId: parsed.threadId,
       filesIncluded: includedFiles,
       filesSkipped: skippedFiles,
       imagesIncluded: imageNames,
-      timedOut: true,
+      timedOut: false,
     };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
+}
 
-  checkErrorPatterns(result.exitCode, result.stderr);
-
-  const parsed = parseCodexOutput(result.stdout, result.stderr);
-
-  // Store session for resume if we got a thread ID
-  let outputSessionId = input.sessionId;
-  if (parsed.threadId && isValidSessionId(parsed.threadId)) {
-    const sessionId = input.sessionId ?? `codex-${Date.now()}`;
-    try {
-      sessionStore.set(sessionId, {
-        conversationId: parsed.threadId,
-        model: actualModel,
-        createdAt: Date.now(),
-        lastUsedAt: Date.now(),
-      });
-      outputSessionId = sessionId;
-    } catch {
-      // Log warning, continue without session storage
-    }
+async function readOutputFile(filePath: string): Promise<string | undefined> {
+  try {
+    const text = await readFile(filePath, "utf8");
+    return text.trim() || undefined;
+  } catch {
+    return undefined;
   }
-
-  return {
-    response: parsed.response,
-    model: actualModel,
-    fallbackUsed: fallbackUsed || undefined,
-    sessionId: outputSessionId,
-    conversationId: parsed.threadId,
-    filesIncluded: includedFiles,
-    filesSkipped: skippedFiles,
-    imagesIncluded: imageNames,
-    timedOut: false,
-  };
 }
 
 interface BuildArgsInput {
@@ -193,6 +208,8 @@ interface BuildArgsInput {
   reasoningEffort?: "low" | "medium" | "high";
   conversationId?: string;
   prompt?: string;
+  outputFile?: string;
+  imagePaths?: string[];
 }
 
 /**
@@ -207,15 +224,14 @@ interface BuildArgsInput {
  * Full auto (agentic):
  *   codex exec --model MODEL --full-auto --skip-git-repo-check "prompt"
  */
-function buildArgs(input: BuildArgsInput): string[] {
-  const { model, sandbox, reasoningEffort, conversationId, prompt } = input;
-  const args: string[] = ["exec"];
+export function buildArgs(input: BuildArgsInput): string[] {
+  const { model, sandbox, reasoningEffort, conversationId, prompt, outputFile, imagePaths = [] } = input;
+  const args: string[] = ["exec", "--json"];
 
   if (conversationId) {
     // Resume path: config flags before subcommand args
     args.push("--skip-git-repo-check");
     if (model) args.push("-c", `model="${escapeArg(model)}"`);
-    if (reasoningEffort) args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
     args.push("resume", conversationId);
   } else {
     // New conversation
@@ -227,7 +243,13 @@ function buildArgs(input: BuildArgsInput): string[] {
       args.push("--sandbox", sandbox);
     }
     args.push("--skip-git-repo-check");
-    if (reasoningEffort) args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
+  }
+
+  // Shared flags for both new and resume paths
+  if (reasoningEffort) args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
+  if (outputFile) args.push("-o", outputFile);
+  for (const imagePath of imagePaths) {
+    args.push("-i", imagePath);
   }
 
   if (prompt) args.push(prompt);

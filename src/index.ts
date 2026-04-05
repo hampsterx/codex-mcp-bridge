@@ -33,7 +33,7 @@ server.tool(
     sandbox: z
       .enum(["read-only", "workspace-write", "full-auto"])
       .optional()
-      .describe("Sandbox level: read-only (default), workspace-write, or full-auto (agentic)"),
+      .describe("Sandbox level: read-only (default), workspace-write, or full-auto (Codex CLI convenience mode for workspace-write with auto-approve)"),
     sessionId: z
       .string()
       .optional()
