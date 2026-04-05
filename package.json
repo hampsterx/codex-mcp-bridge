@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "CODEX_INTEGRATION=1 vitest run tests/integration/",
+    "smoke": "node scripts/smoke-test.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
