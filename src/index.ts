@@ -9,6 +9,13 @@ import { executeReview } from "./tools/review.js";
 import { executeSearch } from "./tools/search.js";
 import { executePing } from "./tools/ping.js";
 import { executeStructured } from "./tools/structured.js";
+import {
+  codexAnnotations,
+  reviewAnnotations,
+  searchAnnotations,
+  structuredAnnotations,
+  pingAnnotations,
+} from "./annotations.js";
 
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require("../package.json") as { version: string };
@@ -57,6 +64,7 @@ server.tool(
       .optional()
       .describe("Soft limit on response length in words"),
   },
+  codexAnnotations,
   async (input) => {
     try {
       const result = await executeCodex(input);
@@ -137,6 +145,7 @@ server.tool(
       .optional()
       .describe("Soft limit on response length in words"),
   },
+  reviewAnnotations,
   async (input) => {
     try {
       const result = await executeReview(input);
@@ -186,6 +195,7 @@ server.tool(
       .optional()
       .describe("Soft limit on response length in words"),
   },
+  searchAnnotations,
   async (input) => {
     try {
       const result = await executeSearch(input);
@@ -238,6 +248,7 @@ server.tool(
       .optional()
       .describe("Timeout in milliseconds (default: 60000)"),
   },
+  structuredAnnotations,
   async (input) => {
     try {
       const result = await executeStructured(input);
@@ -279,6 +290,7 @@ server.tool(
   "ping",
   "Health check: verifies Codex CLI is installed and authenticated, reports versions and capabilities.",
   {},
+  pingAnnotations,
   async () => {
     try {
       const result = await executePing();
