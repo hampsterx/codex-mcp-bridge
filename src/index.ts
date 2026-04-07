@@ -32,7 +32,17 @@ server.registerTool(
   "codex",
   {
     title: "Codex CLI",
-    description: "Execute a prompt via Codex CLI with optional file context, session resume, and sandbox control. Supports multi-turn conversations. The CLI reads AGENTS.md/CODEX.md for project context automatically.",
+    description: `Execute a prompt via Codex CLI. Codex is an AI coding agent that can generate, analyze, refactor, and explain code with full project context (reads AGENTS.md/CODEX.md automatically).
+
+Capabilities: code generation and refactoring, code analysis and explanation, file reading and modification (when sandbox allows), git operations and terminal commands, multi-turn conversations via sessionId.
+
+Tips:
+- Set workingDirectory to the target repo for project-aware responses.
+- Use sandbox "read-only" (default) for analysis, "full-auto" for code changes.
+- Break complex tasks into focused prompts rather than one large request.
+- Resume multi-turn conversations with sessionId (returned in previous response metadata).
+- Include relevant files via the files parameter for targeted context (text and images supported).
+- Set reasoningEffort to "low" for simple tasks, "high" for complex analysis.`,
     inputSchema: {
       prompt: z.string().describe("The prompt to send to Codex"),
       files: z
@@ -134,7 +144,16 @@ server.registerTool(
   "review",
   {
     title: "Code Review",
-    description: "Repo-aware code review. Default (agentic): Codex explores the repo in full-auto mode with built-in tools for deep context. Use quick: true for fast diff-only review.",
+    description: `Repo-aware code review powered by Codex CLI. Returns structured feedback on code changes with two modes:
+
+- Agentic (default): Codex runs inside the repo with full autonomy — reads the diff, explores related files, follows imports, checks tests, and reads project instruction files before reviewing. Best for thorough reviews. Default timeout: 5 minutes.
+- Quick (quick: true): Receives only the diff text. Fast single-pass review without repo exploration. Default timeout: 2 minutes.
+
+Tips:
+- Use the focus parameter to direct attention: "security", "performance", "error handling", "testing".
+- Set workingDirectory to the repo you want reviewed (auto-resolves to git root).
+- Default reviews uncommitted changes (staged + unstaged). Use base to review a branch diff (e.g. base: "main").
+- Prefer agentic mode for important reviews, quick mode for rapid feedback during development.`,
     inputSchema: {
       uncommitted: z
         .boolean()
@@ -215,7 +234,13 @@ server.registerTool(
   "search",
   {
     title: "Web Search",
-    description: "Web search via Codex CLI. Searches the web and synthesizes an answer with source URLs.",
+    description: `Web search via Codex CLI. Searches the web and synthesizes a comprehensive answer with source URLs. Use for current information, documentation lookups, API references, and research questions.
+
+Tips:
+- Ask specific, focused questions for best results.
+- Results include source URLs for verification.
+- Use maxResponseLength to control response verbosity.
+- Default timeout is 2 minutes; increase for complex research queries that may require multiple web fetches.`,
     inputSchema: {
       query: z.string().describe("Search query or question"),
       model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
