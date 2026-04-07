@@ -4,6 +4,7 @@ import {
   reviewAnnotations,
   searchAnnotations,
   structuredAnnotations,
+  listSessionsAnnotations,
   pingAnnotations,
 } from "../../src/annotations.js";
 
@@ -12,6 +13,7 @@ const allAnnotations = {
   review: reviewAnnotations,
   search: searchAnnotations,
   structured: structuredAnnotations,
+  listSessions: listSessionsAnnotations,
   ping: pingAnnotations,
 };
 
@@ -59,6 +61,13 @@ describe("tool annotations", () => {
     expect(structuredAnnotations.readOnlyHint).toBe(true);
     expect(structuredAnnotations.destructiveHint).toBe(false);
     expect(structuredAnnotations.idempotentHint).toBe(false);
+  });
+
+  it("listSessions is read-only, idempotent, and closed-world", () => {
+    expect(listSessionsAnnotations.readOnlyHint).toBe(true);
+    expect(listSessionsAnnotations.destructiveHint).toBe(false);
+    expect(listSessionsAnnotations.idempotentHint).toBe(true);
+    expect(listSessionsAnnotations.openWorldHint).toBe(false);
   });
 
   it("ping is read-only, idempotent, and closed-world", () => {

@@ -14,8 +14,10 @@ import {
   reviewAnnotations,
   searchAnnotations,
   structuredAnnotations,
+  listSessionsAnnotations,
   pingAnnotations,
 } from "./annotations.js";
+import { sessionStore } from "./utils/session.js";
 import { buildMeta } from "./utils/meta.js";
 
 const require = createRequire(import.meta.url);
@@ -58,6 +60,10 @@ Tips:
         .string()
         .optional()
         .describe("Session ID to resume a previous conversation"),
+      resetSession: z
+        .boolean()
+        .optional()
+        .describe("Clear this session's conversation history and start fresh (requires sessionId)"),
       reasoningEffort: z
         .enum(["low", "medium", "high"])
         .optional()
@@ -376,6 +382,39 @@ server.registerTool(
         _meta: buildMeta({ durationMs }),
       };
     }
+  },
+);
+
+// --- listSessions tool ---
+
+server.registerTool(
+  "listSessions",
+  {
+    title: "List Sessions",
+    description: "List active Codex conversation sessions. Returns session metadata for orchestration (no prompts or responses, just IDs and timing). Use to check available sessions before resuming with the codex tool's sessionId parameter.",
+    inputSchema: {},
+    annotations: listSessionsAnnotations,
+  },
+  async () => {
+    const startTime = Date.now();
+    const sessions = sessionStore.list().map(({ sessionId, entry }) => ({
+      sessionId,
+      conversationId: entry.conversationId,
+      model: entry.model,
+      createdAt: entry.createdAt,
+      lastUsedAt: entry.lastUsedAt,
+      turnCount: entry.turnCount,
+    }));
+
+    const durationMs = Date.now() - startTime;
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify(sessions, null, 2),
+      }],
+      _meta: buildMeta({ durationMs }),
+    };
   },
 );
 

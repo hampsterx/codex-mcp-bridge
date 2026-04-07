@@ -130,4 +130,50 @@ describe("executeCodex", () => {
     expect(result.conversationId).toBe("thread_abc123");
     expect(result.sessionId).toMatch(/^codex-/);
   });
+
+  it("resetSession clears the session before executing", async () => {
+    // Pre-populate a session
+    sessionStore.set("my-session", {
+      conversationId: "old_thread",
+      model: "o3",
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      turnCount: 5,
+    });
+
+    spawnCodexMock.mockImplementation(async ({ args }) => {
+      const outputIndex = args.indexOf("-o");
+      if (outputIndex > -1) {
+        await writeFile(args[outputIndex + 1]!, "Fresh start\n", "utf8");
+      }
+      return {
+        stdout: JSON.stringify({ type: "thread.started", thread_id: "new_thread" }),
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+      };
+    });
+
+    const result = await executeCodex({
+      prompt: "Start fresh",
+      model: "o3",
+      sessionId: "my-session",
+      resetSession: true,
+    });
+
+    // Should NOT have used the old conversationId (no "resume" in args)
+    const spawnArgs = spawnCodexMock.mock.calls[0]![0].args;
+    expect(spawnArgs).not.toContain("resume");
+    expect(spawnArgs).not.toContain("old_thread");
+
+    // New session should be stored
+    expect(result.conversationId).toBe("new_thread");
+    expect(result.sessionId).toBe("my-session");
+
+    // Session store should have the new conversationId with turn count reset
+    const stored = sessionStore.get("my-session");
+    expect(stored).toBeDefined();
+    expect(stored!.conversationId).toBe("new_thread");
+    expect(stored!.turnCount).toBe(1); // reset: previous deleted, fresh start
+  });
 });

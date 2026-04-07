@@ -90,8 +90,15 @@ try {
     console.log("response:", result.response.slice(0, 200));
     console.log("valid:", result.valid);
     console.log("timedOut:", result.timedOut);
+  } else if (tool === "listSessions") {
+    const { sessionStore } = await import("../dist/utils/session.js");
+    const sessions = sessionStore.list();
+    console.log(`Active sessions: ${sessions.length}`);
+    for (const { sessionId, entry } of sessions) {
+      console.log(`  ${sessionId}: turns=${entry.turnCount}, model=${entry.model ?? "unknown"}, created=${new Date(entry.createdAt).toISOString()}`);
+    }
   } else {
-    console.error(`Unknown tool: ${tool}. Use: codex, review, search, ping, structured`);
+    console.error(`Unknown tool: ${tool}. Use: codex, review, search, ping, structured, listSessions`);
     process.exit(1);
   }
 
