@@ -43,7 +43,7 @@ function extractDescription(toolName: string): string {
 }
 
 describe("tool descriptions", () => {
-  const tools = ["codex", "review", "search", "structured", "ping"];
+  const tools = ["codex", "review", "search", "structured", "listSessions", "ping"];
 
   for (const tool of tools) {
     it(`${tool} description exists and is non-empty`, () => {
@@ -100,6 +100,19 @@ describe("tool descriptions", () => {
       expect(desc).toContain("Tips:");
       expect(desc).toContain("focus");
       expect(desc).toContain("security");
+    });
+  });
+
+  describe("listSessions", () => {
+    const desc = extractDescription("listSessions");
+
+    it("describes session listing purpose", () => {
+      expect(desc).toContain("session");
+      expect(desc).toContain("orchestration");
+    });
+
+    it("clarifies no sensitive data", () => {
+      expect(desc).toMatch(/no prompts|metadata/i);
     });
   });
 

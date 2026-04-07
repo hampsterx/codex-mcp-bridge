@@ -18,6 +18,7 @@ export interface SessionEntry {
   model?: string;
   createdAt: number;
   lastUsedAt: number;
+  turnCount: number;
 }
 
 export interface SessionStorage {

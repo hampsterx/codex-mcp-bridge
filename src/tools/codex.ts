@@ -23,6 +23,7 @@ export interface CodexInput {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "full-auto";
   sessionId?: string;
+  resetSession?: boolean;
   reasoningEffort?: "low" | "medium" | "high";
   workingDirectory?: string;
   timeout?: number;
@@ -106,9 +107,14 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
   const defaultTimeout = imageNames.length > 0 ? IMAGE_QUERY_TIMEOUT : 60_000;
   const effectiveTimeout = Math.min(timeout ?? defaultTimeout, HARD_TIMEOUT_CAP);
 
-  // Check for session resume
+  // Reset session if requested: delete stored state so the resume block below is a no-op
+  if (input.resetSession && input.sessionId) {
+    sessionStore.delete(input.sessionId);
+  }
+
+  // Check for session resume (skipped when resetSession is true, since we just deleted it)
   let conversationId: string | undefined;
-  if (input.sessionId) {
+  if (input.sessionId && !input.resetSession) {
     const session = sessionStore.get(input.sessionId);
     if (session) {
       conversationId = session.conversationId;
@@ -165,11 +171,13 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
     if (parsed.threadId && isValidSessionId(parsed.threadId)) {
       const sessionId = input.sessionId ?? `codex-${Date.now()}`;
       try {
+        const current = sessionStore.get(sessionId);
         sessionStore.set(sessionId, {
           conversationId: parsed.threadId,
           model: actualModel,
-          createdAt: Date.now(),
+          createdAt: current?.createdAt ?? Date.now(),
           lastUsedAt: Date.now(),
+          turnCount: (current?.turnCount ?? 0) + 1,
         });
         outputSessionId = sessionId;
       } catch {
