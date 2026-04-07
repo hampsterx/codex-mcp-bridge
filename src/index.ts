@@ -16,6 +16,7 @@ import {
   structuredAnnotations,
   pingAnnotations,
 } from "./annotations.js";
+import { buildMeta } from "./utils/meta.js";
 
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require("../package.json") as { version: string };
@@ -27,47 +28,56 @@ const server = new McpServer({
 
 // --- codex tool ---
 
-server.tool(
+server.registerTool(
   "codex",
-  "Execute a prompt via Codex CLI with optional file context, session resume, and sandbox control. Supports multi-turn conversations. The CLI reads AGENTS.md/CODEX.md for project context automatically.",
   {
-    prompt: z.string().describe("The prompt to send to Codex"),
-    files: z
-      .array(z.string())
-      .optional()
-      .describe("File paths (text or images) relative to workingDirectory"),
-    model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
-    sandbox: z
-      .enum(["read-only", "workspace-write", "full-auto"])
-      .optional()
-      .describe("Sandbox level: read-only (default), workspace-write, or full-auto (Codex CLI convenience mode for workspace-write with auto-approve)"),
-    sessionId: z
-      .string()
-      .optional()
-      .describe("Session ID to resume a previous conversation"),
-    reasoningEffort: z
-      .enum(["low", "medium", "high"])
-      .optional()
-      .describe("Reasoning effort level (maps to -c model_reasoning_effort)"),
-    workingDirectory: z
-      .string()
-      .optional()
-      .describe("Working directory for the CLI"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Timeout in milliseconds (default: 60000, max: 600000)"),
-    maxResponseLength: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Soft limit on response length in words"),
+    title: "Codex CLI",
+    description: "Execute a prompt via Codex CLI with optional file context, session resume, and sandbox control. Supports multi-turn conversations. The CLI reads AGENTS.md/CODEX.md for project context automatically.",
+    inputSchema: {
+      prompt: z.string().describe("The prompt to send to Codex"),
+      files: z
+        .array(z.string())
+        .optional()
+        .describe("File paths (text or images) relative to workingDirectory"),
+      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
+      sandbox: z
+        .enum(["read-only", "workspace-write", "full-auto"])
+        .optional()
+        .describe("Sandbox level: read-only (default), workspace-write, or full-auto (Codex CLI convenience mode for workspace-write with auto-approve)"),
+      sessionId: z
+        .string()
+        .optional()
+        .describe("Session ID to resume a previous conversation"),
+      reasoningEffort: z
+        .enum(["low", "medium", "high"])
+        .optional()
+        .describe("Reasoning effort level (maps to -c model_reasoning_effort)"),
+      workingDirectory: z
+        .string()
+        .optional()
+        .describe("Working directory for the CLI"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Timeout in milliseconds (default: 60000, max: 600000)"),
+      maxResponseLength: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Soft limit on response length in words"),
+    },
+    annotations: codexAnnotations,
   },
-  codexAnnotations,
   async (input) => {
+    const startTime = Date.now();
     try {
       const result = await executeCodex(input);
+      const durationMs = Date.now() - startTime;
+
       const meta: string[] = [];
       if (result.filesIncluded.length > 0) {
         meta.push(`Files included: ${result.filesIncluded.join(", ")}`);
@@ -97,11 +107,22 @@ server.tool(
         ? `${result.response}\n\n---\n${meta.join("\n")}`
         : result.response;
 
-      return { content: [{ type: "text", text }] };
-    } catch (e) {
       return {
-        content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text }],
+        _meta: buildMeta({
+          model: result.model,
+          durationMs,
+          fallbackUsed: result.fallbackUsed,
+          sessionId: result.sessionId,
+          conversationId: result.conversationId,
+        }),
+      };
+    } catch (e) {
+      const durationMs = Date.now() - startTime;
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
         isError: true,
+        _meta: buildMeta({ durationMs }),
       };
     }
   },
@@ -109,46 +130,55 @@ server.tool(
 
 // --- review tool ---
 
-server.tool(
+server.registerTool(
   "review",
-  "Repo-aware code review. Default (agentic): Codex explores the repo in full-auto mode with built-in tools for deep context. Use quick: true for fast diff-only review.",
   {
-    uncommitted: z
-      .boolean()
-      .optional()
-      .describe("Review uncommitted changes (staged + unstaged). Default: true"),
-    base: z
-      .string()
-      .optional()
-      .describe("Base branch/ref to diff against (e.g. 'main'). Overrides uncommitted."),
-    focus: z
-      .string()
-      .optional()
-      .describe("Optional focus area (e.g. 'security', 'performance', 'error handling')"),
-    quick: z
-      .boolean()
-      .optional()
-      .describe("Skip repo exploration, just review the diff text. Default: false"),
-    model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
-    workingDirectory: z
-      .string()
-      .optional()
-      .describe("Repository directory (auto-resolves to git root)"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Timeout in milliseconds (default: 300000 agentic / 120000 quick, max: 600000)"),
-    maxResponseLength: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Soft limit on response length in words"),
+    title: "Code Review",
+    description: "Repo-aware code review. Default (agentic): Codex explores the repo in full-auto mode with built-in tools for deep context. Use quick: true for fast diff-only review.",
+    inputSchema: {
+      uncommitted: z
+        .boolean()
+        .optional()
+        .describe("Review uncommitted changes (staged + unstaged). Default: true"),
+      base: z
+        .string()
+        .optional()
+        .describe("Base branch/ref to diff against (e.g. 'main'). Overrides uncommitted."),
+      focus: z
+        .string()
+        .optional()
+        .describe("Optional focus area (e.g. 'security', 'performance', 'error handling')"),
+      quick: z
+        .boolean()
+        .optional()
+        .describe("Skip repo exploration, just review the diff text. Default: false"),
+      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
+      workingDirectory: z
+        .string()
+        .optional()
+        .describe("Repository directory (auto-resolves to git root)"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Timeout in milliseconds (default: 300000 agentic / 120000 quick, max: 600000)"),
+      maxResponseLength: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Soft limit on response length in words"),
+    },
+    annotations: reviewAnnotations,
   },
-  reviewAnnotations,
   async (input) => {
+    const startTime = Date.now();
     try {
       const result = await executeReview(input);
+      const durationMs = Date.now() - startTime;
+
       const meta: string[] = [
         `Diff source: ${result.diffSource}`,
         `Mode: ${result.mode}`,
@@ -159,14 +189,21 @@ server.tool(
 
       return {
         content: [{
-          type: "text",
+          type: "text" as const,
           text: `${result.response}\n\n---\n${meta.join("\n")}`,
         }],
+        _meta: buildMeta({
+          model: result.model,
+          durationMs,
+          fallbackUsed: result.fallbackUsed,
+        }),
       };
     } catch (e) {
+      const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
         isError: true,
+        _meta: buildMeta({ durationMs }),
       };
     }
   },
@@ -174,31 +211,40 @@ server.tool(
 
 // --- search tool ---
 
-server.tool(
+server.registerTool(
   "search",
-  "Web search via Codex CLI. Searches the web and synthesizes an answer with source URLs.",
   {
-    query: z.string().describe("Search query or question"),
-    model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
-    workingDirectory: z
-      .string()
-      .optional()
-      .describe("Working directory for the CLI"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Timeout in milliseconds (default: 120000, max: 600000)"),
-    maxResponseLength: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Soft limit on response length in words"),
+    title: "Web Search",
+    description: "Web search via Codex CLI. Searches the web and synthesizes an answer with source URLs.",
+    inputSchema: {
+      query: z.string().describe("Search query or question"),
+      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
+      workingDirectory: z
+        .string()
+        .optional()
+        .describe("Working directory for the CLI"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Timeout in milliseconds (default: 120000, max: 600000)"),
+      maxResponseLength: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Soft limit on response length in words"),
+    },
+    annotations: searchAnnotations,
   },
-  searchAnnotations,
   async (input) => {
+    const startTime = Date.now();
     try {
       const result = await executeSearch(input);
+      const durationMs = Date.now() - startTime;
+
       const meta: string[] = [];
       if (result.timedOut) meta.push("(timed out)");
       if (result.fallbackUsed) {
@@ -211,11 +257,20 @@ server.tool(
         ? `${result.response}\n\n---\n${meta.join("\n")}`
         : result.response;
 
-      return { content: [{ type: "text", text }] };
-    } catch (e) {
       return {
-        content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text }],
+        _meta: buildMeta({
+          model: result.model,
+          durationMs,
+          fallbackUsed: result.fallbackUsed,
+        }),
+      };
+    } catch (e) {
+      const durationMs = Date.now() - startTime;
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
         isError: true,
+        _meta: buildMeta({ durationMs }),
       };
     }
   },
@@ -223,35 +278,43 @@ server.tool(
 
 // --- structured tool ---
 
-server.tool(
+server.registerTool(
   "structured",
-  "Generate a JSON response conforming to a provided JSON Schema. Use for data extraction, classification, or any task needing machine-parseable output.",
   {
-    prompt: z.string().describe("What to generate or extract"),
-    schema: z
-      .string()
-      .describe("JSON Schema the response must conform to (as a JSON string)"),
-    files: z
-      .array(z.string())
-      .optional()
-      .describe("File paths to include as context (text only, no images)"),
-    model: z
-      .string()
-      .optional()
-      .describe("Model to use (e.g. o3, gpt-4.1)"),
-    workingDirectory: z
-      .string()
-      .optional()
-      .describe("Working directory for file paths"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Timeout in milliseconds (default: 60000)"),
+    title: "Structured Output",
+    description: "Generate a JSON response conforming to a provided JSON Schema. Use for data extraction, classification, or any task needing machine-parseable output.",
+    inputSchema: {
+      prompt: z.string().describe("What to generate or extract"),
+      schema: z
+        .string()
+        .describe("JSON Schema the response must conform to (as a JSON string)"),
+      files: z
+        .array(z.string())
+        .optional()
+        .describe("File paths to include as context (text only, no images)"),
+      model: z
+        .string()
+        .optional()
+        .describe("Model to use (e.g. o3, gpt-4.1)"),
+      workingDirectory: z
+        .string()
+        .optional()
+        .describe("Working directory for file paths"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Timeout in milliseconds (default: 60000)"),
+    },
+    annotations: structuredAnnotations,
   },
-  structuredAnnotations,
   async (input) => {
+    const startTime = Date.now();
     try {
       const result = await executeStructured(input);
+      const durationMs = Date.now() - startTime;
+
       const meta: string[] = [];
       if (result.errors) meta.push(`Errors: ${result.errors}`);
       if (result.filesIncluded.length > 0) {
@@ -268,17 +331,24 @@ server.tool(
 
       return {
         content: [{
-          type: "text",
+          type: "text" as const,
           text: result.valid
             ? `${result.response}${metaSuffix}`
             : `${result.response}\n\n---\nSchema validation failed. ${meta.join("\n")}`,
         }],
         isError: !result.valid,
+        _meta: buildMeta({
+          model: result.model,
+          durationMs,
+          fallbackUsed: result.fallbackUsed,
+        }),
       };
     } catch (e) {
+      const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
         isError: true,
+        _meta: buildMeta({ durationMs }),
       };
     }
   },
@@ -286,14 +356,19 @@ server.tool(
 
 // --- ping tool ---
 
-server.tool(
+server.registerTool(
   "ping",
-  "Health check: verifies Codex CLI is installed and authenticated, reports versions and capabilities.",
-  {},
-  pingAnnotations,
+  {
+    title: "Health Check",
+    description: "Health check: verifies Codex CLI is installed and authenticated, reports versions and capabilities.",
+    inputSchema: {},
+    annotations: pingAnnotations,
+  },
   async () => {
+    const startTime = Date.now();
     try {
       const result = await executePing();
+      const durationMs = Date.now() - startTime;
 
       const lines = [
         `CLI found: ${result.cliFound ? "yes" : "NO — install with: npm i -g @openai/codex"}`,
@@ -307,12 +382,15 @@ server.tool(
       ];
 
       return {
-        content: [{ type: "text", text: lines.join("\n") }],
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+        _meta: buildMeta({ durationMs }),
       };
     } catch (e) {
+      const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
         isError: true,
+        _meta: buildMeta({ durationMs }),
       };
     }
   },
