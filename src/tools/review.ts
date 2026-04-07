@@ -23,6 +23,7 @@ export interface ReviewResult {
   diffSource: "uncommitted" | "branch";
   base?: string;
   mode: "agentic" | "quick";
+  model?: string;
   fallbackUsed?: boolean;
   timedOut: boolean;
 }
@@ -144,7 +145,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
 
   const prompt = buildAgenticPrompt(diffSpec, focus, maxResponseLength);
 
-  const { result, fallbackUsed } = await withModelFallback(
+  const { result, fallbackUsed, fallbackModel } = await withModelFallback(
     model,
     (m, t) => {
       // --full-auto implies sandbox, don't combine with explicit --sandbox
@@ -156,12 +157,15 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     timeout,
   );
 
+  const actualModel = fallbackUsed ? fallbackModel : model;
+
   if (result.timedOut) {
     return {
       response: `Review timed out after ${timeout / 1000}s. Try with quick: true for a faster, diff-only review.`,
       diffSource,
       base,
       mode: "agentic",
+      model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
       timedOut: true,
     };
@@ -176,6 +180,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     diffSource,
     base,
     mode: "agentic",
+    model: actualModel,
     fallbackUsed: fallbackUsed || undefined,
     timedOut: false,
   };
@@ -215,7 +220,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
 
   const fullPrompt = buildQuickPrompt(diff, focus, maxResponseLength);
 
-  const { result, fallbackUsed } = await withModelFallback(
+  const { result, fallbackUsed, fallbackModel } = await withModelFallback(
     model,
     (m, t) => {
       const args: string[] = ["exec"];
@@ -226,12 +231,15 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
     timeout,
   );
 
+  const actualModel = fallbackUsed ? fallbackModel : model;
+
   if (result.timedOut) {
     return {
       response: `Review timed out after ${timeout / 1000}s. The diff may be too large. Try reviewing a smaller scope.`,
       diffSource,
       base,
       mode: "quick",
+      model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
       timedOut: true,
     };
@@ -246,6 +254,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
     diffSource,
     base,
     mode: "quick",
+    model: actualModel,
     fallbackUsed: fallbackUsed || undefined,
     timedOut: false,
   };

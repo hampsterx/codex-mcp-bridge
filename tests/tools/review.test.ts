@@ -71,6 +71,7 @@ describe("executeReview", () => {
     expect(result.mode).toBe("agentic");
     expect(result.diffSource).toBe("uncommitted");
     expect(result.response).toBe("review findings");
+    expect(result.model).toBe("o3");
   });
 
   it("returns early when quick review has no uncommitted changes", async () => {
@@ -86,6 +87,7 @@ describe("executeReview", () => {
     expect(spawnCodexMock).not.toHaveBeenCalled();
     expect(result.mode).toBe("quick");
     expect(result.response).toBe("No uncommitted changes found");
+    expect(result.model).toBeUndefined();
   });
 
   it("uses read-only sandbox for quick branch review", async () => {
@@ -109,5 +111,6 @@ describe("executeReview", () => {
     expect(result.mode).toBe("quick");
     expect(result.diffSource).toBe("branch");
     expect(result.base).toBe("main");
+    expect(result.model).toBe("o3");
   });
 });
