@@ -153,18 +153,24 @@ npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
 ```
 
-## Comparison with [codex-mcp-server](https://github.com/tuannvm/codex-mcp-server)
+## How does this compare to other Codex MCP servers?
 
-| Aspect | [codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) | codex-mcp-bridge |
-|--------|-----------------|------------------|
-| **Review** | Sends diff text to CLI | Agentic: CLI explores repo in full-auto |
-| **Security** | No env filtering, no path validation | Env allowlist, path sandboxing, log redaction |
-| **Concurrency** | Unbounded spawns | Max 3, FIFO queue |
-| **Output parsing** | Basic stderr capture | Multi-strategy (JSONL/JSON/text fallback) |
-| **Model fallback** | None | Auto-retry with fallback model |
-| **Prompt templates** | Hardcoded | Editable .md files |
-| **Structured output** | threadId forwarding only | JSON Schema validated (Ajv) |
-| **Tests** | ~50% coverage | High coverage including spawn |
+| | codex-mcp-bridge | [@tuannvm/codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) |
+|---|---|---|
+| **Review mode** | Agentic (CLI explores repo in full-auto) | Diff text sent to CLI |
+| **Structured output** | JSON Schema validated (Ajv) | threadId forwarding |
+| **Model fallback** | Auto-retry with fallback model | No |
+| **Concurrency** | Max 3, FIFO queue | Unbounded |
+| **Output parsing** | Multi-strategy (JSONL/JSON/text fallback) | Basic stderr capture |
+| **Prompt templates** | Editable .md files | Hardcoded |
+| **Security** | Env allowlist, path sandboxing, log redaction | Basic |
+| **Tests** | High coverage including spawn | ~50% coverage |
+
+**When to pick codex-mcp-bridge**: You want agentic code review where Codex explores the repo itself, structured output with schema validation, or hardened subprocess management.
+
+**When to pick @tuannvm/codex-mcp-server**: You want a lighter wrapper with fewer opinions, or you're already using it and it meets your needs.
+
+Know of another Codex MCP server? Open an issue and we'll add it to the table.
 
 ## License
 
