@@ -153,9 +153,9 @@ npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
 ```
 
-## Comparison with codex-mcp-server
+## Comparison with [codex-mcp-server](https://github.com/tuannvm/codex-mcp-server)
 
-| Aspect | codex-mcp-server | codex-mcp-bridge |
+| Aspect | [codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) | codex-mcp-bridge |
 |--------|-----------------|------------------|
 | **Review** | Sends diff text to CLI | Agentic: CLI explores repo in full-auto |
 | **Security** | No env filtering, no path validation | Env allowlist, path sandboxing, log redaction |
