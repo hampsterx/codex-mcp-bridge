@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] - 2026-04-08
+
+### Added
+
+- `listSessions` tool for inspecting active Codex conversation sessions
+- `resetSession` parameter on `codex` tool to discard and restart sessions
+- MCP tool annotations (readOnlyHint, openWorldHint, etc.) on all tools
+- `_meta` execution metadata (model, duration, timeout, sessionId) in all tool responses
+- Rich markdown tool descriptions with usage examples and parameter docs
+- Smoke test script (`npm run smoke`) for quick post-build validation
+- CLAUDE.md project instructions
+
+### Changed
+
+- CI publish step removed in favour of manual `npm publish` with OTP
+
 ## [0.1.0] - 2026-04-05
 
 ### Added
