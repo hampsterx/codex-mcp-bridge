@@ -25,47 +25,100 @@ export interface SpawnResult {
 }
 
 // Concurrency management
+
+/**
+ * Resolve max concurrency from an explicit override or CODEX_MAX_CONCURRENT.
+ * Rejects zero, negative, and non-integer values — all of which would
+ * deadlock acquireSlot (activeCount < 0/NaN is always false) — and falls
+ * back to the default.
+ */
+function readMaxConcurrent(override?: number): number {
+  if (typeof override === "number") {
+    return Number.isInteger(override) && override > 0
+      ? override
+      : DEFAULT_MAX_CONCURRENT;
+  }
+
+  const parsed = Number.parseInt(
+    process.env["CODEX_MAX_CONCURRENT"] ?? String(DEFAULT_MAX_CONCURRENT),
+    10,
+  );
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_CONCURRENT;
+}
+
 let activeCount = 0;
-const maxConcurrent = parseInt(
-  process.env["CODEX_MAX_CONCURRENT"] ?? String(DEFAULT_MAX_CONCURRENT),
-  10,
-);
+let maxConcurrent = readMaxConcurrent();
 
-const waitQueue: Array<{
-  resolve: () => void;
+interface WaitEntry {
+  grant: () => void;
   reject: (err: Error) => void;
-}> = [];
+  timer: NodeJS.Timeout;
+}
 
-function acquireSlot(): Promise<void> {
+const waitQueue: WaitEntry[] = [];
+
+/**
+ * Acquire a concurrency slot. Resolves immediately if under the limit,
+ * otherwise queues until a slot is released or the queue timeout fires.
+ * Exported for diagnostics and tests.
+ */
+export function acquireSlot(queueTimeoutMs: number = QUEUE_TIMEOUT): Promise<void> {
   if (activeCount < maxConcurrent) {
     activeCount++;
     return Promise.resolve();
   }
 
   return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      const idx = waitQueue.findIndex((w) => w.resolve === resolve);
-      if (idx !== -1) waitQueue.splice(idx, 1);
-      reject(new Error(`Concurrency queue timeout after ${QUEUE_TIMEOUT}ms — ${activeCount} processes active`));
-    }, QUEUE_TIMEOUT);
-
-    waitQueue.push({
-      resolve: () => {
-        clearTimeout(timer);
-        activeCount++;
-        resolve();
-      },
+    const entry: WaitEntry = {
+      grant: () => {},
       reject,
-    });
+      timer: setTimeout(() => {
+        const idx = waitQueue.indexOf(entry);
+        if (idx !== -1) waitQueue.splice(idx, 1);
+        reject(
+          new Error(
+            `Concurrency queue timeout after ${queueTimeoutMs}ms — ${activeCount} processes active`,
+          ),
+        );
+      }, queueTimeoutMs),
+    };
+
+    entry.grant = () => {
+      clearTimeout(entry.timer);
+      activeCount++;
+      resolve();
+    };
+
+    waitQueue.push(entry);
   });
 }
 
-function releaseSlot(): void {
+/**
+ * Release a concurrency slot. If a waiter is queued, hand the slot to it.
+ * Exported for diagnostics and tests.
+ */
+export function releaseSlot(): void {
   activeCount--;
   const next = waitQueue.shift();
   if (next) {
-    next.resolve();
+    next.grant();
   }
+}
+
+/** Read the current active count. Exported for diagnostics and tests. */
+export function getActiveCount(): number {
+  return activeCount;
+}
+
+/** Read the current queue depth. Exported for diagnostics and tests. */
+export function getQueueDepth(): number {
+  return waitQueue.length;
+}
+
+/** Read the configured max concurrency. Exported for diagnostics. */
+export function getMaxConcurrent(): number {
+  return maxConcurrent;
 }
 
 /**
@@ -197,9 +250,18 @@ function killProcessGroup(child: ChildProcess): NodeJS.Timeout | undefined {
 }
 
 /**
- * Reset concurrency state (for testing).
+ * Reset concurrency state (for testing). Optionally override maxConcurrent;
+ * called without an argument, restores the env-derived default so stale
+ * overrides from prior tests cannot leak across suites. Rejects any pending
+ * waiters and clears their queue-timeout timers so the event loop drains
+ * cleanly between tests.
  */
-export function resetConcurrency(): void {
+export function resetConcurrency(newMaxConcurrent?: number): void {
   activeCount = 0;
-  waitQueue.length = 0;
+  while (waitQueue.length > 0) {
+    const entry = waitQueue.shift()!;
+    clearTimeout(entry.timer);
+    entry.reject(new Error("Concurrency state reset"));
+  }
+  maxConcurrent = readMaxConcurrent(newMaxConcurrent);
 }

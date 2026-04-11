@@ -1,6 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { findCodexBinary } from "../utils/spawn.js";
+import {
+  findCodexBinary,
+  getActiveCount,
+  getMaxConcurrent,
+  getQueueDepth,
+} from "../utils/spawn.js";
 import { buildSubprocessEnv } from "../utils/env.js";
 import { getDefaultModel, getFallbackModel } from "../utils/model.js";
 
@@ -16,6 +21,8 @@ export interface PingResult {
   serverVersion: string;
   nodeVersion: string;
   maxConcurrent: number;
+  activeCount: number;
+  queueDepth: number;
 }
 
 /**
@@ -40,10 +47,9 @@ function detectAuthStatus(): PingResult["authStatus"] {
  */
 export async function executePing(): Promise<PingResult> {
   const binary = findCodexBinary();
-  const maxConcurrent = parseInt(
-    process.env["CODEX_MAX_CONCURRENT"] ?? "3",
-    10,
-  );
+  const maxConcurrent = getMaxConcurrent();
+  const activeCount = getActiveCount();
+  const queueDepth = getQueueDepth();
 
   let cliFound = false;
   let version: string | null = null;
@@ -67,6 +73,8 @@ export async function executePing(): Promise<PingResult> {
         serverVersion: PKG_VERSION,
         nodeVersion: process.version,
         maxConcurrent,
+        activeCount,
+        queueDepth,
       };
     }
     cliFound = true;
@@ -85,5 +93,7 @@ export async function executePing(): Promise<PingResult> {
     serverVersion: PKG_VERSION,
     nodeVersion: process.version,
     maxConcurrent,
+    activeCount,
+    queueDepth,
   };
 }
