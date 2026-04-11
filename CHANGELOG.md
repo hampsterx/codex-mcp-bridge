@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- Concurrency queue leak: `acquireSlot` did not remove its own entry from the
+  wait queue on timeout because `findIndex` compared the stored wrapper against
+  the outer promise's raw `resolve`. Stale entries then got picked by
+  `releaseSlot`, which bumped `activeCount` by one per stale entry and
+  permanently pinned the pool at `CODEX_MAX_CONCURRENT` with zero live
+  subprocesses. Entries are now captured by reference and removed via
+  `indexOf`.
+
+### Added
+
+- `ping` output now includes `activeCount` and `queueDepth` for faster
+  diagnosis of queue state from a live bridge.
+
 ## [0.2.0] - 2026-04-08
 
 ### Added

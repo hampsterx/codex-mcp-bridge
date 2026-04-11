@@ -443,6 +443,8 @@ server.registerTool(
         `Server version: ${result.serverVersion}`,
         `Node version: ${result.nodeVersion}`,
         `Max concurrent: ${result.maxConcurrent}`,
+        `Active count: ${result.activeCount}`,
+        `Queue depth: ${result.queueDepth}`,
       ];
 
       return {
