@@ -16,6 +16,7 @@ import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
 import { sessionStore, isValidSessionId } from "../utils/session.js";
 import { escapeArg } from "../utils/windows.js";
+import { getMcpServerOverride } from "../utils/env.js";
 
 export interface CodexInput {
   prompt: string;
@@ -234,7 +235,7 @@ interface BuildArgsInput {
  */
 export function buildArgs(input: BuildArgsInput): string[] {
   const { model, sandbox, reasoningEffort, conversationId, prompt, outputFile, imagePaths = [] } = input;
-  const args: string[] = ["exec", "--json"];
+  const args: string[] = ["exec", "--json", ...getMcpServerOverride()];
 
   if (conversationId) {
     // Resume path: config flags before subcommand args

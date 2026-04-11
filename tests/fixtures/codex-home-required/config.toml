@@ -1,0 +1,11 @@
+model = "gpt-5-codex"
+
+[mcp_servers.foo]
+command = "foo-mcp"
+
+[mcp_servers.bar]
+command = "bar-mcp"
+required = true
+
+[mcp_servers.baz]
+command = "baz-mcp"

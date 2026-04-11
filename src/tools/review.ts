@@ -6,6 +6,7 @@ import { getGitRoot, getUncommittedDiff, getBranchDiff } from "../utils/git.js";
 import { verifyDirectory } from "../utils/security.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
+import { getMcpServerOverride } from "../utils/env.js";
 
 export interface ReviewInput {
   uncommitted?: boolean;
@@ -16,6 +17,14 @@ export interface ReviewInput {
   workingDirectory?: string;
   timeout?: number;
   maxResponseLength?: number;
+  /**
+   * MCP servers to enable for this review, using the CODEX_MCP_SERVERS grammar
+   * (comma-separated list, "inherit", raw TOML, or empty). When unset, agentic
+   * mode defaults to "serena" so symbol navigation is available during review;
+   * quick mode defaults to disable-all (empty string). Setting this explicitly
+   * overrides both the tool default and the CODEX_MCP_SERVERS env var.
+   */
+  mcpServers?: string;
 }
 
 export interface ReviewResult {
@@ -76,11 +85,27 @@ export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
     : process.cwd();
   const cwd = getGitRoot(requestedDir);
 
+  // Resolve the effective CODEX_MCP_SERVERS value for this review:
+  //   1. Explicit input.mcpServers wins (tool caller knows what they want).
+  //   2. Otherwise CODEX_MCP_SERVERS env var, if set.
+  //   3. Otherwise: agentic defaults to "serena" (symbol nav during review);
+  //      quick stays disable-all (empty string).
+  // When the value came from the implicit tool default (case 3), warnings for
+  // unknown/required servers are suppressed — the user never asked for
+  // anything, so yelling at them about the bridge's internal preferences is
+  // noise.
+  const envVal = process.env["CODEX_MCP_SERVERS"];
+  const callerExplicit = input.mcpServers !== undefined || envVal !== undefined;
+  const mcpServers =
+    input.mcpServers ??
+    (envVal !== undefined ? envVal : quick ? "" : "serena");
+  const silentMcp = !callerExplicit;
+
   if (quick) {
-    return executeQuickReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength });
+    return executeQuickReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp });
   }
 
-  return executeAgenticReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength });
+  return executeAgenticReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp });
 }
 
 interface InternalReviewInput {
@@ -91,6 +116,8 @@ interface InternalReviewInput {
   model?: string;
   timeout: number;
   maxResponseLength?: number;
+  mcpServers: string;
+  silentMcp: boolean;
 }
 
 /**
@@ -98,7 +125,7 @@ interface InternalReviewInput {
  * It has full autonomy to read files, run git commands, follow imports.
  */
 async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewResult> {
-  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength } = input;
+  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp } = input;
 
   let diffSpec: string;
   let diffSource: ReviewResult["diffSource"];
@@ -149,7 +176,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     model,
     (m, t) => {
       // --full-auto implies sandbox, don't combine with explicit --sandbox
-      const args: string[] = ["exec"];
+      const args: string[] = ["exec", ...getMcpServerOverride(mcpServers, { silent: silentMcp })];
       if (m) args.push("--model", m);
       args.push("--full-auto", "--skip-git-repo-check");
       return spawnCodex({ args, cwd, stdin: prompt, timeout: t });
@@ -190,7 +217,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
  * Quick review: pre-computed diff, single-pass, no repo exploration.
  */
 async function executeQuickReview(input: InternalReviewInput): Promise<ReviewResult> {
-  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength } = input;
+  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp } = input;
 
   let diff: string;
   let diffSource: ReviewResult["diffSource"];
@@ -223,7 +250,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
   const { result, fallbackUsed, fallbackModel } = await withModelFallback(
     model,
     (m, t) => {
-      const args: string[] = ["exec"];
+      const args: string[] = ["exec", ...getMcpServerOverride(mcpServers, { silent: silentMcp })];
       if (m) args.push("--model", m);
       args.push("--sandbox", "read-only", "--skip-git-repo-check");
       return spawnCodex({ args, cwd, stdin: fullPrompt, timeout: t });

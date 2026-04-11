@@ -105,6 +105,31 @@ npm run smoke -- ping                  # health check
 | `CODEX_FALLBACK_MODEL` | `o3` | Fallback on quota exhaustion. `none` to disable |
 | `CODEX_CLI_PATH` | `codex` | Path to Codex CLI binary |
 | `CODEX_MAX_CONCURRENT` | `3` | Max concurrent subprocess spawns |
+| `CODEX_MCP_SERVERS` | _(unset)_ | MCP server enable grammar. See below. |
+
+### `CODEX_MCP_SERVERS` grammar
+
+Controls which MCP servers from `~/.codex/config.toml` stay enabled inside
+the Codex subprocess. Branches evaluated top-to-bottom:
+
+1. **unset / empty / whitespace** → disable every configured server except
+   those marked `required = true` in config.toml.
+2. **`inherit`** (exact, case-sensitive) → pass through config unchanged.
+3. **first non-ws char is `{` or `[`** → raw TOML escape hatch, forwarded as
+   `-c mcp_servers=<value>`.
+4. **otherwise** → comma-separated list of server names to enable. Every
+   other configured server gets disabled (except required ones). Unknowns
+   warn to stderr once and are dropped.
+
+Per-tool defaults: `review` agentic mode defaults to `serena` (symbol nav
+during review). Pass the `mcpServers` tool param to override; explicit param
+wins over env var wins over tool default.
+
+The `required` flag (codex PR #10902) is read straight from `config.toml`
+and cannot be disabled by any caller. Parsed synchronously, no per-spawn
+subprocess cost. The grammar narrowed in this release: old builds accepted
+any non-empty non-`inherit` value as raw TOML; now only values starting with
+`{` or `[` do. Unreleased env var, non-breaking.
 
 ## Testing
 
