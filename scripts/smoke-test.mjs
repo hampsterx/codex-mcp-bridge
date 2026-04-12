@@ -14,6 +14,7 @@
  *   node scripts/smoke-test.mjs codex /tmp           # codex tool, /tmp
  *   node scripts/smoke-test.mjs review ~/NUI/cream   # review tool against cream
  *   node scripts/smoke-test.mjs search               # web search
+ *   node scripts/smoke-test.mjs query                # lightweight query
  *   node scripts/smoke-test.mjs ping                 # health check
  */
 
@@ -66,6 +67,16 @@ try {
     });
     console.log("response:", result.response.slice(0, 200) + (result.response.length > 200 ? "..." : ""));
     console.log("timedOut:", result.timedOut);
+  } else if (tool === "query") {
+    const { executeQuery } = await import("../dist/tools/query.js");
+    const result = await executeQuery({
+      prompt: "What are the pros and cons of this approach?",
+      context: "Using a temp directory as cwd to isolate subprocess context.",
+      timeout: 60_000,
+      maxResponseLength: 50,
+    });
+    console.log("response:", result.response.slice(0, 200) + (result.response.length > 200 ? "..." : ""));
+    console.log("timedOut:", result.timedOut);
   } else if (tool === "ping") {
     const { executePing } = await import("../dist/tools/ping.js");
     const result = await executePing();
@@ -98,7 +109,7 @@ try {
       console.log(`  ${sessionId}: turns=${entry.turnCount}, model=${entry.model ?? "unknown"}, created=${new Date(entry.createdAt).toISOString()}`);
     }
   } else {
-    console.error(`Unknown tool: ${tool}. Use: codex, review, search, ping, structured, listSessions`);
+    console.error(`Unknown tool: ${tool}. Use: codex, review, search, query, ping, structured, listSessions`);
     process.exit(1);
   }
 

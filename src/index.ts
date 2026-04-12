@@ -7,12 +7,14 @@ import { z } from "zod";
 import { executeCodex } from "./tools/codex.js";
 import { executeReview } from "./tools/review.js";
 import { executeSearch } from "./tools/search.js";
+import { executeQuery } from "./tools/query.js";
 import { executePing } from "./tools/ping.js";
 import { executeStructured } from "./tools/structured.js";
 import {
   codexAnnotations,
   reviewAnnotations,
   searchAnnotations,
+  queryAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
@@ -301,6 +303,90 @@ Tips:
     );
     try {
       const result = await executeSearch(input);
+      const durationMs = Date.now() - startTime;
+
+      const meta: string[] = [];
+      if (result.timedOut) meta.push("(timed out)");
+      if (result.fallbackUsed) {
+        meta.push(`Note: ${result.model ?? "fallback model"} used after quota exhaustion`);
+      } else if (result.model) {
+        meta.push(`Model: ${result.model}`);
+      }
+
+      const text = meta.length > 0
+        ? `${result.response}\n\n---\n${meta.join("\n")}`
+        : result.response;
+
+      return {
+        content: [{ type: "text" as const, text }],
+        _meta: buildMeta({
+          model: result.model,
+          durationMs,
+          fallbackUsed: result.fallbackUsed,
+        }),
+      };
+    } catch (e) {
+      const durationMs = Date.now() - startTime;
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        isError: true,
+        _meta: buildMeta({ durationMs }),
+      };
+    } finally {
+      heartbeat.stop();
+    }
+  },
+);
+
+// --- query tool ---
+
+server.registerTool(
+  "query",
+  {
+    title: "Quick Query",
+    description: `Lightweight query for analysis or opinions on text you already have. No file reading, no repo exploration, no session state. Pass text in the context parameter. For code execution or file operations, use the codex tool instead.
+
+Use cases: reviewing a plan, critiquing a draft, comparing approaches, answering questions about provided text, generating summaries.
+
+Tips:
+- Pass the text to analyze in the context parameter, not as file paths.
+- Set reasoningEffort to "low" for simple opinions, "high" for thorough analysis.
+- Use maxResponseLength to control verbosity.`,
+    inputSchema: {
+      prompt: z.string().describe("The question or instruction"),
+      context: z
+        .string()
+        .optional()
+        .describe("Text to analyze (inline, not file paths)"),
+      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
+      reasoningEffort: z
+        .enum(["low", "medium", "high"])
+        .optional()
+        .describe("Reasoning effort level (maps to -c model_reasoning_effort)"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Timeout in milliseconds (default: 60000, max: 600000)"),
+      maxResponseLength: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Soft limit on response length in words"),
+    },
+    annotations: queryAnnotations,
+  },
+  async (input, extra) => {
+    const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
+    try {
+      const result = await executeQuery(input);
       const durationMs = Date.now() - startTime;
 
       const meta: string[] = [];

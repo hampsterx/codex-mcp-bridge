@@ -85,6 +85,7 @@ claude mcp add codex-bridge -- npx codex-mcp-bridge
 | `codex` | Execute prompts with file context, session resume, sandbox control | 60s |
 | `review` | Agentic repo-aware code review (Codex explores repo in full-auto) | 300s (agentic) / 120s (quick) |
 | `search` | Web search via `codex --search` | 120s |
+| `query` | Lightweight text analysis (no repo context, no sessions) | 60s |
 | `structured` | JSON Schema validated output | 60s |
 | `ping` | Health check + CLI capability detection | 10s |
 | `listSessions` | List active Codex conversation sessions | 30s |
@@ -105,6 +106,10 @@ Two modes:
 ### search
 
 Web search powered by Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
+
+### query
+
+Lightweight, non-agentic query for analysis or opinions on text you already have. No file reading, no repo exploration, no session state. Spawns in an isolated temp directory so the bridge's own repo context doesn't leak. Pass text to analyze in the `context` parameter. Supports `reasoningEffort` control.
 
 ### structured
 
@@ -134,7 +139,7 @@ Useful for orchestrating agents that need to track latency, detect quota fallbac
 
 ### MCP annotations
 
-All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so MCP clients can make informed permission and safety decisions. The `codex` and `review` tools are marked destructive (full-auto sandbox mode can write files); `search`, `structured`, `listSessions`, and `ping` are read-only.
+All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so MCP clients can make informed permission and safety decisions. The `codex` and `review` tools are marked destructive (full-auto sandbox mode can write files); `search`, `query`, `structured`, `listSessions`, and `ping` are read-only.
 
 ## Configuration
 

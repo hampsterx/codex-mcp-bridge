@@ -15,7 +15,7 @@ Open source MCP server that wraps Codex CLI as a subprocess, exposing code execu
 MCP Client  --stdio-->  codex-mcp-bridge  --spawn-->  codex CLI subprocess
 ```
 
-Prompts are assembled in TypeScript and spawned via the CLI. The `review` and `search` tools load prompt templates from `prompts/*.md` via `src/utils/prompts.ts` and fill placeholders. The `review` tool's agentic mode runs Codex in `--full-auto` inside the target repo, letting it explore files, follow imports, and read project instruction files.
+Prompts are assembled in TypeScript and spawned via the CLI. The `review`, `search`, and `query` tools load prompt templates from `prompts/*.md` via `src/utils/prompts.ts` and fill placeholders. The `review` tool's agentic mode runs Codex in `--full-auto` inside the target repo, letting it explore files, follow imports, and read project instruction files.
 
 ## Tools
 
@@ -24,6 +24,7 @@ Prompts are assembled in TypeScript and spawned via the CLI. The `review` and `s
 | `codex` | Execute prompts with file context, session resume, sandbox control | 60s |
 | `review` | Agentic repo-aware code review (Codex explores repo in full-auto) | 300s (agentic) / 120s (quick) |
 | `search` | Web search via `codex --search` | 120s |
+| `query` | Lightweight text analysis (no repo context, no sessions) | 60s |
 | `structured` | JSON Schema validated output (Ajv) | 60s |
 | `ping` | Health check + CLI capability detection | 10s |
 | `listSessions` | List active Codex conversation sessions | 30s |
@@ -40,6 +41,10 @@ Two modes:
 - **Quick** (`quick: true`): Sends only the diff text. Single-pass, no repo exploration.
 
 Optional `focus` parameter directs attention (e.g. "security", "performance", "error handling").
+
+### Query Tool Details
+
+Lightweight, non-agentic query for text analysis. Spawns in an isolated temp directory (not the bridge's repo) with `--sandbox read-only --skip-git-repo-check --ephemeral`. No file reading, no session state, all non-required MCP servers disabled. Supports `reasoningEffort` and `maxResponseLength`.
 
 ### Structured Tool Details
 
@@ -65,6 +70,7 @@ npm run smoke                          # codex tool, cwd
 npm run smoke -- codex /path/to/repo   # codex with specific workingDirectory
 npm run smoke -- review ~/NUI/cream    # review tool against another repo
 npm run smoke -- search                # web search
+npm run smoke -- query                 # lightweight query
 npm run smoke -- ping                  # health check
 ```
 
