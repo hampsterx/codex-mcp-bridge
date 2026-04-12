@@ -350,6 +350,72 @@ describe("getMcpServerOverride", () => {
       "-c", "mcp_servers.serena.enabled=false",
     ]);
   });
+
+  it("explicit empty string env var warns when it would drop a required server", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      process.env["CODEX_MCP_SERVERS"] = "";
+      process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+      expect(getMcpServerOverride()).toEqual([
+        "-c", "mcp_servers.baz.enabled=false",
+        "-c", "mcp_servers.foo.enabled=false",
+      ]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("refusing to disable required MCP server 'bar'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("explicit whitespace-only env var also warns about required drops", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      process.env["CODEX_MCP_SERVERS"] = "   ";
+      process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+      getMcpServerOverride();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("refusing to disable required MCP server 'bar'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("explicit empty override parameter warns about required drops", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      delete process.env["CODEX_MCP_SERVERS"];
+      process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+      expect(getMcpServerOverride("")).toEqual([
+        "-c", "mcp_servers.baz.enabled=false",
+        "-c", "mcp_servers.foo.enabled=false",
+      ]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("refusing to disable required MCP server 'bar'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("silent:true suppresses required warning even on explicit empty override", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      delete process.env["CODEX_MCP_SERVERS"];
+      process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+      // Tool-default path: review.ts passes "" explicitly for quick mode with
+      // silent:true so users who never set anything don't see warnings.
+      const args = getMcpServerOverride("", { silent: true });
+      expect(args).toEqual([
+        "-c", "mcp_servers.baz.enabled=false",
+        "-c", "mcp_servers.foo.enabled=false",
+      ]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe("willEnableServer", () => {

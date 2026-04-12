@@ -42,6 +42,14 @@ const ALLOWED_ENV_KEYS = [
  *      `mcp_servers={}` override silently no-ops on older Codex due to
  *      config-merge semantics (upstream #16045), so enumeration is the
  *      only reliable path.
+ *
+ *      Truly unset (no `override`, no env var) stays silent about required
+ *      servers being kept on. An **explicit** empty/whitespace value —
+ *      caller passed `""` or set `CODEX_MCP_SERVERS=""` — is treated as
+ *      "I want disable-all" and warns loudly if the request would drop a
+ *      required server (via `buildMcpArgs` with an empty enable set).
+ *      This keeps the noisy default path quiet while still honouring the
+ *      README contract that required-server drops get surfaced.
  *   2. `"inherit"` (exact, case-sensitive, after trim) → pass through
  *      whatever's in ~/.codex/config.toml unchanged.
  *   3. first non-whitespace char is `{` or `[` → raw TOML escape hatch,
@@ -70,13 +78,22 @@ export function getMcpServerOverride(
   override?: string,
   { silent = false }: { silent?: boolean } = {},
 ): string[] {
-  const raw = override !== undefined ? override : process.env["CODEX_MCP_SERVERS"];
+  const envValue = process.env["CODEX_MCP_SERVERS"];
+  // "Explicit" means the caller or the env var provided a value (even if it's
+  // an empty string or whitespace). Truly-unset = both undefined.
+  const explicit = override !== undefined || envValue !== undefined;
+  const raw = override !== undefined ? override : envValue;
   const val = raw?.trim() ?? "";
 
   // Branch 1: unset / empty / whitespace → disable all non-required.
   if (val === "") {
-    const config = readCodexConfig();
-    return buildMcpArgs(listMcpServers(config));
+    const configured = listMcpServers(readCodexConfig());
+    // Explicit "" → treat as a disable-all request and warn on required drops.
+    // Truly unset, or silent tool-default path → stay silent.
+    if (explicit && !silent) {
+      return buildMcpArgs(configured, new Set<string>());
+    }
+    return buildMcpArgs(configured);
   }
 
   // Branch 2: inherit → passthrough.
