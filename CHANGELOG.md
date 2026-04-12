@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Progress heartbeats: `codex`, `review`, and `search` tools emit MCP
+  `notifications/progress` every 15s during subprocess execution when the
+  client provides a `progressToken` in `_meta`. Fire-and-forget (silent on
+  unsupported clients).
 - `ping` output now includes `activeCount` and `queueDepth` for faster
   diagnosis of queue state from a live bridge.
 

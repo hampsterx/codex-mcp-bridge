@@ -19,6 +19,7 @@ import {
 } from "./annotations.js";
 import { sessionStore } from "./utils/session.js";
 import { buildMeta } from "./utils/meta.js";
+import { maybeStartHeartbeat, type ProgressNotificationSender } from "./utils/progress.js";
 
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require("../package.json") as { version: string };
@@ -88,8 +89,12 @@ Tips:
     },
     annotations: codexAnnotations,
   },
-  async (input) => {
+  async (input, extra) => {
     const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
     try {
       const result = await executeCodex(input);
       const durationMs = Date.now() - startTime;
@@ -140,6 +145,8 @@ Tips:
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
+    } finally {
+      heartbeat.stop();
     }
   },
 );
@@ -204,8 +211,12 @@ Tips:
     },
     annotations: reviewAnnotations,
   },
-  async (input) => {
+  async (input, extra) => {
     const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
     try {
       const result = await executeReview(input);
       const durationMs = Date.now() - startTime;
@@ -236,6 +247,8 @@ Tips:
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
+    } finally {
+      heartbeat.stop();
     }
   },
 );
@@ -276,8 +289,12 @@ Tips:
     },
     annotations: searchAnnotations,
   },
-  async (input) => {
+  async (input, extra) => {
     const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
     try {
       const result = await executeSearch(input);
       const durationMs = Date.now() - startTime;
@@ -309,6 +326,8 @@ Tips:
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
+    } finally {
+      heartbeat.stop();
     }
   },
 );
