@@ -57,7 +57,7 @@ Tips:
       files: z
         .array(z.string())
         .optional()
-        .describe("File paths (text or images) relative to workingDirectory"),
+        .describe("File paths relative to workingDirectory. Supports line ranges: 'path:start-end' (e.g. 'src/lib.rs:900-950'). Text and images supported (images ignore line ranges)."),
       model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
       sandbox: z
         .enum(["read-only", "workspace-write", "full-auto"])
@@ -85,7 +85,7 @@ Tips:
         .positive()
         .max(600_000)
         .optional()
-        .describe("Timeout in milliseconds (default: 60000, max: 600000)"),
+        .describe("Timeout in milliseconds (default: 60s no files, 180s+30s/file with files, max: 600000)"),
       maxResponseLength: z
         .number()
         .int()
@@ -437,7 +437,7 @@ server.registerTool(
       files: z
         .array(z.string())
         .optional()
-        .describe("File paths to include as context (text only, no images)"),
+        .describe("File paths to include as context (text only, no images). Supports line ranges: 'path:start-end' (e.g. 'src/lib.rs:900-950')."),
       model: z
         .string()
         .optional()
