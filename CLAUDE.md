@@ -70,6 +70,11 @@ npm run smoke -- ping                  # health check
 
 ## Key Design Decisions
 
+### Progress Heartbeats
+Codex, review, and search handlers emit MCP `notifications/progress` every 15s
+during subprocess execution when the client provides a `progressToken` in `_meta`.
+Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progress.ts`.
+
 ### Subprocess Environment (Security Critical)
 - **Explicit env allowlist**, never spread `process.env`
 - Allowed keys: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `CODEX_HOME`, `CODEX_DEFAULT_MODEL`, `HOME`, `PATH`, `USER`, `SHELL`, `LANG`, `TERM`, `XDG_CONFIG_HOME`
