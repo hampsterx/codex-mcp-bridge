@@ -39,6 +39,10 @@ server.registerTool(
 
 Capabilities: code generation and refactoring, code analysis and explanation, file reading and modification (when sandbox allows), git operations and terminal commands, multi-turn conversations via sessionId.
 
+When to use a different tool:
+- For code review, use the review tool instead (it runs git diff, explores the repo, and follows imports automatically).
+- For analysis of text you already have (plans, docs, opinions), inline it directly in the prompt rather than passing file paths. The files parameter triggers full file I/O and increases timeout pressure.
+
 Tips:
 - Set workingDirectory to the target repo for project-aware responses.
 - Use sandbox "read-only" (default) for analysis, "full-auto" for code changes.
