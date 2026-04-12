@@ -87,10 +87,11 @@ claude mcp add codex-bridge -- npx codex-mcp-bridge
 | `search` | Web search via `codex --search` | 120s |
 | `structured` | JSON Schema validated output | 60s |
 | `ping` | Health check + CLI capability detection | 10s |
+| `listSessions` | List active Codex conversation sessions | 30s |
 
 ### codex
 
-General-purpose execution. Supports multi-turn conversations via session IDs, sandbox levels (`read-only`, `workspace-write`, `full-auto`), and reasoning effort control.
+General-purpose execution. Supports multi-turn conversations via session IDs, sandbox levels (`read-only`, `workspace-write`, `full-auto`), and reasoning effort control. Pass `resetSession: true` to discard an existing session and start fresh. Use `listSessions` to inspect active sessions before resuming.
 
 ### review
 
@@ -108,6 +109,32 @@ Web search powered by Codex CLI's `--search` flag. Returns synthesized answers w
 ### structured
 
 Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns the raw JSON on success, validation errors on failure.
+
+### listSessions
+
+Returns a JSON array of active conversation sessions. Each entry includes `sessionId`, `conversationId`, `model`, `createdAt`, `lastUsedAt`, and `turnCount`. Always returns JSON, even when empty.
+
+### ping
+
+Returns CLI version, available features, model configuration, and concurrency diagnostics (`activeCount`, `queueDepth`). Useful for health monitoring and debugging concurrency issues.
+
+### Execution metadata
+
+All tools attach `_meta` to the `CallToolResult` with execution metadata:
+
+| Field | Type | Present on |
+|-------|------|------------|
+| `durationMs` | number | All tools |
+| `model` | string | Tools that run Codex CLI |
+| `fallbackUsed` | boolean | Tools that run Codex CLI |
+| `sessionId` | string | `codex` tool only |
+| `conversationId` | string | `codex` tool only |
+
+Useful for orchestrating agents that need to track latency, detect quota fallback, or manage session state.
+
+### MCP annotations
+
+All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so MCP clients can make informed permission and safety decisions. The `codex` and `review` tools are marked destructive (full-auto sandbox mode can write files); `search`, `structured`, `listSessions`, and `ping` are read-only.
 
 ## Configuration
 
