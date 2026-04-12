@@ -250,6 +250,69 @@ describe("executeReview", () => {
     ]);
   });
 
+  it("agentic default with serena configured loads the serena-aware prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({ quick: false, uncommitted: true, model: "o3" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    // Distinctive markers from review-agentic-with-serena.md
+    expect(call.stdin).toContain("Serena");
+    expect(call.stdin).toContain("get_symbols_overview");
+    expect(call.stdin).toContain("find_referencing_symbols");
+  });
+
+  it("agentic with mcpServers=\"\" loads the generic prompt (no serena markers)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({
+      quick: false,
+      uncommitted: true,
+      model: "o3",
+      mcpServers: "",
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).not.toContain("get_symbols_overview");
+    expect(call.stdin).not.toContain("find_referencing_symbols");
+    // Generic prompt tells the reviewer to read full file contents.
+    expect(call.stdin).toContain("Read the FULL contents");
+  });
+
+  it("agentic default with no serena in config uses the generic prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    // codex-home-url has no serena; agentic default would ask for serena but
+    // willEnableServer should report false, so generic prompt loads.
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-url");
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await executeReview({ quick: false, uncommitted: true, model: "o3" });
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).not.toContain("get_symbols_overview");
+    expect(call.stdin).toContain("Read the FULL contents");
+  });
+
   it("uses read-only sandbox for quick branch review", async () => {
     getBranchDiffMock.mockReturnValue("diff --git a/y b/y");
     spawnCodexMock.mockResolvedValue({

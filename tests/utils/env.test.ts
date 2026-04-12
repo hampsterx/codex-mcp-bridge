@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
-import { buildSubprocessEnv, getMcpServerOverride } from "../../src/utils/env.js";
+import {
+  buildSubprocessEnv,
+  getMcpServerOverride,
+  willEnableServer,
+} from "../../src/utils/env.js";
 
 const FIXTURES = join(process.cwd(), "tests", "fixtures");
 const fixtureHome = (name: string): string => join(FIXTURES, name);
@@ -345,5 +349,83 @@ describe("getMcpServerOverride", () => {
       "-c", "mcp_servers.playwright.enabled=false",
       "-c", "mcp_servers.serena.enabled=false",
     ]);
+  });
+});
+
+describe("willEnableServer", () => {
+  const origCodexHome = process.env["CODEX_HOME"];
+
+  afterEach(() => {
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  it("empty override: non-required servers are disabled, so serena is off", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("", "serena")).toBe(false);
+  });
+
+  it("empty override: required servers stay on", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+    expect(willEnableServer("", "bar")).toBe(true);
+    expect(willEnableServer("", "foo")).toBe(false);
+  });
+
+  it("inherit: configured server is reported enabled", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("inherit", "serena")).toBe(true);
+    expect(willEnableServer("inherit", "github")).toBe(true);
+  });
+
+  it("inherit: unknown server is not enabled", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("inherit", "not-a-server")).toBe(false);
+  });
+
+  it("inherit: respects explicit enabled=false in config.toml", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-disabled");
+    expect(willEnableServer("inherit", "serena")).toBe(false);
+    expect(willEnableServer("inherit", "playwright")).toBe(true);
+  });
+
+  it("comma list: named server is enabled", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("serena", "serena")).toBe(true);
+    expect(willEnableServer("serena,github", "github")).toBe(true);
+  });
+
+  it("comma list: unnamed server is disabled unless required", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
+    expect(willEnableServer("foo", "baz")).toBe(false);
+    expect(willEnableServer("foo", "bar")).toBe(true); // bar is required
+  });
+
+  it("comma list: trims whitespace around names", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer(" serena , github ", "serena")).toBe(true);
+  });
+
+  it("raw TOML override is intentionally conservative and returns false", () => {
+    // Documented behaviour: raw TOML is a power-user escape hatch. Rather than
+    // duplicate Codex's TOML parsing (and inherit its failure modes on invalid
+    // input), willEnableServer always reports "not enabled" for raw overrides.
+    // Callers who need the serena prompt alongside raw TOML should pass the
+    // list form explicitly.
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("{ serena = { enabled = true } }", "serena")).toBe(false);
+    expect(willEnableServer("{ serena = { enabled = false } }", "serena")).toBe(false);
+    expect(willEnableServer("[serena]", "serena")).toBe(false);
+  });
+
+  it("comma list: typoed server name is not reported enabled", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-url");
+    // codex-home-url has github + atlassian, no serena. Asking for "serena"
+    // in the list doesn't magically configure it.
+    expect(willEnableServer("serena", "serena")).toBe(false);
+  });
+
+  it("whitespace-only override is treated as empty (disable-all)", () => {
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
+    expect(willEnableServer("   ", "serena")).toBe(false);
   });
 });

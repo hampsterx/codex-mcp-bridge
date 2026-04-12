@@ -4,8 +4,12 @@
  * A/B test: Does Codex use Serena MCP tools during agentic review?
  *
  * Runs the same agentic review twice:
- *   Run A: CODEX_MCP_SERVERS='{}' (no MCP servers — default bridge behavior)
- *   Run B: CODEX_MCP_SERVERS='inherit' (all configured MCP servers)
+ *   Run A: mcpServers="" (disable every configured server — real no-MCP control)
+ *   Run B: mcpServers="inherit" (all configured MCP servers)
+ *
+ * Note: passing `undefined` as the second arg is NOT a no-MCP run, because
+ * review.ts defaults agentic mode to `"serena"` when the caller doesn't set
+ * an explicit value. The control has to pass `""` to actually disable.
  *
  * Compares wall time and captures full output for quality comparison.
  *
@@ -30,14 +34,12 @@ console.log(`Date: ${new Date().toISOString()}\n`);
 const { executeReview } = await import("../dist/tools/review.js");
 
 async function runReview(label, mcpServers) {
-  // Set the env var before each run
-  if (mcpServers === undefined) {
-    delete process.env.CODEX_MCP_SERVERS;
-  } else {
-    process.env.CODEX_MCP_SERVERS = mcpServers;
-  }
+  // Ensure the env var can't leak between runs. We pass `mcpServers`
+  // explicitly through the tool input so review.ts's agentic default
+  // ("serena" when unset) never kicks in.
+  delete process.env.CODEX_MCP_SERVERS;
 
-  console.log(`--- ${label} (CODEX_MCP_SERVERS=${mcpServers ?? "<unset>"}) ---`);
+  console.log(`--- ${label} (mcpServers="${mcpServers}") ---`);
   const start = performance.now();
 
   try {
@@ -46,6 +48,7 @@ async function runReview(label, mcpServers) {
       quick: false,  // agentic mode
       workingDirectory,
       timeout: 300_000,
+      mcpServers,
     });
 
     const elapsed = ((performance.now() - start) / 1000).toFixed(1);
@@ -64,8 +67,8 @@ async function runReview(label, mcpServers) {
   }
 }
 
-// Run A: No MCP servers (default bridge behavior)
-const runA = await runReview("Run A: No MCP servers", undefined);
+// Run A: No MCP servers (explicit disable-all, bypassing the agentic default)
+const runA = await runReview("Run A: No MCP servers", "");
 
 console.log("\n" + "=".repeat(60) + "\n");
 

@@ -116,6 +116,67 @@ export function getMcpServerOverride(
   return buildMcpArgs(configured, enabled, { silent });
 }
 
+/**
+ * Decide whether an MCP server will be effectively enabled for a subprocess
+ * spawned with the given `CODEX_MCP_SERVERS` grammar value.
+ *
+ * Mirrors the branches in {@link getMcpServerOverride}:
+ *
+ *   - `""` / whitespace → disable-all, so only `required=true` servers survive.
+ *   - `"inherit"` → check the user's config.toml; treat a configured server as
+ *     enabled unless its entry explicitly sets `enabled=false`.
+ *   - raw TOML (`{…}`/`[…]`) → intentionally conservative: return false even
+ *     if the raw override would enable the server. Rationale: parsing arbitrary
+ *     user-supplied TOML just to pick a prompt duplicates Codex's own parsing
+ *     and introduces a new failure mode on malformed input. The raw-TOML branch
+ *     is a power-user escape hatch, callers who want the serena prompt with
+ *     raw TOML can also pass `mcpServers: "serena"` for the list branch or
+ *     accept the generic prompt (Codex still has the tools at runtime, the
+ *     generic prompt just doesn't advertise them).
+ *   - comma-separated list → enabled iff the server is configured (so the
+ *     caller didn't typo the name) AND either `name` (case-sensitive, trimmed)
+ *     is in the list OR the server is `required=true` in config.toml.
+ *
+ * Used by `review.ts` to pick the serena-aware agentic prompt only when the
+ * serena MCP will actually be available in the subprocess. Synchronous by
+ * design, same config-read contract as `getMcpServerOverride`.
+ */
+export function willEnableServer(override: string, name: string): boolean {
+  const val = override.trim();
+
+  if (val === "") {
+    const configured = listMcpServers(readCodexConfig());
+    const entry = configured.find((s) => s.name === name);
+    return entry?.required === true;
+  }
+
+  if (val === "inherit") {
+    const config = readCodexConfig();
+    const entry = config?.mcp_servers && typeof config.mcp_servers === "object"
+      ? (config.mcp_servers as Record<string, unknown>)[name]
+      : undefined;
+    if (entry === undefined) return false;
+    if (typeof entry === "object" && entry !== null) {
+      const enabledField = (entry as Record<string, unknown>)["enabled"];
+      if (enabledField === false) return false;
+    }
+    return true;
+  }
+
+  const first = val[0];
+  if (first === "{" || first === "[") {
+    return false;
+  }
+
+  const requested = new Set(
+    val.split(",").map((s) => s.trim()).filter((s) => s.length > 0),
+  );
+  const configured = listMcpServers(readCodexConfig());
+  const entry = configured.find((s) => s.name === name);
+  if (!entry) return false; // not configured → can't be enabled even if named
+  return requested.has(name) || entry.required;
+}
+
 /** Build a minimal, safe environment for Codex CLI subprocesses. */
 export function buildSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {

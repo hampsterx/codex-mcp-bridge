@@ -6,7 +6,7 @@ import { getGitRoot, getUncommittedDiff, getBranchDiff } from "../utils/git.js";
 import { verifyDirectory } from "../utils/security.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
-import { getMcpServerOverride } from "../utils/env.js";
+import { getMcpServerOverride, willEnableServer } from "../utils/env.js";
 
 export interface ReviewInput {
   uncommitted?: boolean;
@@ -46,9 +46,21 @@ const QUICK_TIMEOUT = 120_000;
 /**
  * Agentic review prompt. Codex CLI runs in --full-auto with shell access.
  * It will run git diff, read files, follow imports.
+ *
+ * When `useSerenaPrompt` is true, loads the serena-aware variant that tells
+ * Codex to prefer Serena MCP tools (get_symbols_overview, find_symbol,
+ * find_referencing_symbols) over cat/grep. Callers should set this only when
+ * the serena MCP server is actually enabled for the subprocess — otherwise
+ * the LLM will try to call tools that don't exist.
  */
-export function buildAgenticPrompt(diffSpec: string, focus?: string, maxResponseLength?: number): string {
-  return loadPrompt("review-agentic.md", {
+export function buildAgenticPrompt(
+  diffSpec: string,
+  focus?: string,
+  maxResponseLength?: number,
+  useSerenaPrompt = false,
+): string {
+  const file = useSerenaPrompt ? "review-agentic-with-serena.md" : "review-agentic.md";
+  return loadPrompt(file, {
     DIFF_SPEC: diffSpec,
     FOCUS_SECTION: focus ? `## Focus Area\n\nPay special attention to: ${focus}` : "",
     LENGTH_LIMIT: buildLengthLimit(maxResponseLength),
@@ -170,7 +182,8 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     throw e;
   }
 
-  const prompt = buildAgenticPrompt(diffSpec, focus, maxResponseLength);
+  const useSerenaPrompt = willEnableServer(mcpServers, "serena");
+  const prompt = buildAgenticPrompt(diffSpec, focus, maxResponseLength, useSerenaPrompt);
 
   const { result, fallbackUsed, fallbackModel } = await withModelFallback(
     model,
