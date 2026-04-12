@@ -129,14 +129,27 @@ export interface BuildMcpArgsOptions {
 }
 
 /**
- * Build CLI args to disable every configured MCP server that is NOT in the
- * `enabled` set, except servers with `required=true` which are always kept
- * enabled (disabling them would break Codex startup).
+ * Build CLI args to control configured MCP servers:
  *
- * `enabled` is a set of server names the caller wants left on.
- *   - `undefined` → disable all non-required (default "disable-all" behaviour)
- *   - `new Set()` → same as undefined
- *   - `new Set(["serena"])` → disable all except serena and any required
+ *   - Servers in the `enabled` set get an explicit
+ *     `-c mcp_servers.NAME.enabled=true` override, so a requested server that
+ *     happens to be `enabled = false` in `config.toml` is still turned on.
+ *     Without this, the bridge's only lever is the disable path and a user
+ *     who asked `CODEX_MCP_SERVERS=serena` on a config where `serena.enabled
+ *     = false` would end up with serena silently off while `willEnableServer`
+ *     reports it as on, picking the serena-aware review prompt for a
+ *     subprocess that has no serena tools.
+ *   - Every other configured server gets `-c mcp_servers.NAME.enabled=false`,
+ *     except `required = true` servers which are always kept enabled
+ *     (disabling them would break Codex startup).
+ *
+ * `enabled` is the set of server names the caller wants left on.
+ *   - `undefined` → disable all non-required (default "disable-all" behaviour).
+ *     No `enabled=true` overrides are emitted: anyone relying on the default
+ *     already has their config pointed the way they want.
+ *   - `new Set()` → same as undefined (no servers enabled, disable all non-required).
+ *   - `new Set(["serena"])` → emit `serena.enabled=true`; disable every other
+ *     non-required server.
  *
  * When a required server is not in the enable set and `enabled` was explicitly
  * provided, emits one warning per offending name (the caller's list would have
@@ -154,7 +167,10 @@ export function buildMcpArgs(
   const out: string[] = [];
   const sorted = [...configured].sort((a, b) => a.name.localeCompare(b.name));
   for (const { name, required } of sorted) {
-    if (enabled?.has(name)) continue;
+    if (enabled?.has(name)) {
+      out.push("-c", `mcp_servers.${quoteKey(name)}.enabled=true`);
+      continue;
+    }
     if (required) {
       if (enabled !== undefined && !silent) {
         console.warn(

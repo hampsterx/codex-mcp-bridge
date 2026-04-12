@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * A/B test: Does Codex use Serena MCP tools during agentic review?
+ * A/B test: How much does MCP boot time cost an agentic review?
  *
  * Runs the same agentic review twice:
- *   Run A: mcpServers="" (disable every configured server — real no-MCP control)
- *   Run B: mcpServers="inherit" (all configured MCP servers)
+ *   Run A: mcpServers=""        (disable every configured server — no-MCP control)
+ *   Run B: mcpServers="inherit" (all configured MCP servers, the realistic
+ *                                upper bound on boot cost — not a serena-only
+ *                                treatment; pass mcpServers="serena" manually
+ *                                if you want to isolate just the serena cost)
  *
  * Note: passing `undefined` as the second arg is NOT a no-MCP run, because
  * review.ts defaults agentic mode to `"serena"` when the caller doesn't set

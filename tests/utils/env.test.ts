@@ -207,7 +207,9 @@ describe("getMcpServerOverride", () => {
     process.env["CODEX_MCP_SERVERS"] = "github,serena";
     process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
     expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.github.enabled=true",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 
@@ -215,7 +217,9 @@ describe("getMcpServerOverride", () => {
     process.env["CODEX_MCP_SERVERS"] = " github , serena ";
     process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
     expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.github.enabled=true",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 
@@ -223,7 +227,9 @@ describe("getMcpServerOverride", () => {
     process.env["CODEX_MCP_SERVERS"] = "github,,serena,";
     process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
     expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.github.enabled=true",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 
@@ -231,7 +237,9 @@ describe("getMcpServerOverride", () => {
     process.env["CODEX_MCP_SERVERS"] = "github,github,serena";
     process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
     expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.github.enabled=true",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 
@@ -241,7 +249,9 @@ describe("getMcpServerOverride", () => {
       process.env["CODEX_MCP_SERVERS"] = "github,unknown,unknown,serena";
       process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
       expect(getMcpServerOverride()).toEqual([
+        "-c", "mcp_servers.github.enabled=true",
         "-c", "mcp_servers.playwright.enabled=false",
+        "-c", "mcp_servers.serena.enabled=true",
       ]);
       // Only one warning for 'unknown' despite two mentions.
       const unknownWarns = warnSpy.mock.calls.filter((c) =>
@@ -259,11 +269,12 @@ describe("getMcpServerOverride", () => {
       process.env["CODEX_MCP_SERVERS"] = "foo";
       process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
       // Config has foo (non-req), bar (required), baz (non-req).
-      // foo is in enable set → not disabled.
-      // bar is required → kept enabled with warn.
+      // foo is in enable set → explicit enabled=true.
+      // bar is required → kept enabled with warn (no explicit override emitted).
       // baz → disabled.
       expect(getMcpServerOverride()).toEqual([
         "-c", "mcp_servers.baz.enabled=false",
+        "-c", "mcp_servers.foo.enabled=true",
       ]);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("refusing to disable required MCP server 'bar'"),
@@ -279,6 +290,7 @@ describe("getMcpServerOverride", () => {
       process.env["CODEX_MCP_SERVERS"] = "bar";
       process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
       expect(getMcpServerOverride()).toEqual([
+        "-c", "mcp_servers.bar.enabled=true",
         "-c", "mcp_servers.baz.enabled=false",
         "-c", "mcp_servers.foo.enabled=false",
       ]);
@@ -286,6 +298,20 @@ describe("getMcpServerOverride", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it("comma list: emits enabled=true for a requested server that config.toml disables", () => {
+    // Regression for the review.ts serena-prompt mismatch. codex-home-disabled
+    // has playwright (enabled by default) and serena (enabled=false). Asking
+    // for serena via the env var must emit an explicit enabled=true so Codex
+    // actually turns it on — otherwise willEnableServer picks the serena-aware
+    // prompt while the subprocess has no serena tools.
+    process.env["CODEX_MCP_SERVERS"] = "serena";
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-disabled");
+    expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
+    ]);
   });
 
   it("default mode silently keeps required servers enabled", () => {
@@ -310,6 +336,7 @@ describe("getMcpServerOverride", () => {
     expect(getMcpServerOverride("serena")).toEqual([
       "-c", "mcp_servers.github.enabled=false",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 
@@ -335,6 +362,7 @@ describe("getMcpServerOverride", () => {
       const args = getMcpServerOverride("foo", { silent: true });
       expect(args).toEqual([
         "-c", "mcp_servers.baz.enabled=false",
+        "-c", "mcp_servers.foo.enabled=true",
       ]);
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {

@@ -134,6 +134,7 @@ describe("buildDisableArgs", () => {
     expect(buildDisableArgs(["github", "playwright", "serena"], "serena")).toEqual([
       "-c", "mcp_servers.github.enabled=false",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
     ]);
   });
 });
@@ -212,6 +213,7 @@ describe("buildMcpArgs", () => {
     const args = buildMcpArgs(configured, new Set(["foo"]));
     expect(args).toEqual([
       "-c", "mcp_servers.baz.enabled=false",
+      "-c", "mcp_servers.foo.enabled=true",
     ]);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]![0]).toMatch(/refusing to disable required MCP server 'bar'/);
@@ -221,6 +223,7 @@ describe("buildMcpArgs", () => {
     const args = buildMcpArgs(configured, new Set(["foo"]), { silent: true });
     expect(args).toEqual([
       "-c", "mcp_servers.baz.enabled=false",
+      "-c", "mcp_servers.foo.enabled=true",
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -228,19 +231,32 @@ describe("buildMcpArgs", () => {
   it("does not warn when required server is already in enable set", () => {
     const args = buildMcpArgs(configured, new Set(["bar"]));
     expect(args).toEqual([
+      "-c", "mcp_servers.bar.enabled=true",
       "-c", "mcp_servers.baz.enabled=false",
       "-c", "mcp_servers.foo.enabled=false",
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("quotes non-bare TOML keys", () => {
+  it("emits enabled=true for every requested server (overrides config.toml enabled=false)", () => {
+    // Regression: without the explicit enabled=true override, a caller asking
+    // for a server that happens to be enabled=false in config.toml would
+    // silently get it disabled while willEnableServer reports it enabled.
+    const args = buildMcpArgs(configured, new Set(["foo", "baz"]));
+    expect(args).toEqual([
+      "-c", "mcp_servers.baz.enabled=true",
+      "-c", "mcp_servers.foo.enabled=true",
+    ]);
+  });
+
+  it("quotes non-bare TOML keys for both enable and disable overrides", () => {
     const args = buildMcpArgs(
       [{ name: "weird.name", required: false }, { name: "ck-search", required: false }],
+      new Set(["weird.name"]),
     );
     expect(args).toEqual([
       "-c", "mcp_servers.ck-search.enabled=false",
-      "-c", 'mcp_servers."weird.name".enabled=false',
+      "-c", 'mcp_servers."weird.name".enabled=true',
     ]);
   });
 });

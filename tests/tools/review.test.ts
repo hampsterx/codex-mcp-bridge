@@ -130,11 +130,13 @@ describe("executeReview", () => {
     });
 
     const call = spawnCodexMock.mock.calls[0]![0];
-    // serena kept enabled, github + playwright disabled.
+    // serena explicitly enabled (so config.toml enabled=false would still be
+    // overridden), github + playwright disabled.
     expect(call.args).toEqual([
       "exec",
       "-c", "mcp_servers.github.enabled=false",
       "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
       "--model", "o3",
       "--full-auto",
       "--skip-git-repo-check",
@@ -242,6 +244,7 @@ describe("executeReview", () => {
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.args).toEqual([
       "exec",
+      "-c", "mcp_servers.github.enabled=true",
       "-c", "mcp_servers.playwright.enabled=false",
       "-c", "mcp_servers.serena.enabled=false",
       "--model", "o3",

@@ -19,10 +19,14 @@ export interface ReviewInput {
   maxResponseLength?: number;
   /**
    * MCP servers to enable for this review, using the CODEX_MCP_SERVERS grammar
-   * (comma-separated list, "inherit", raw TOML, or empty). When unset, agentic
-   * mode defaults to "serena" so symbol navigation is available during review;
-   * quick mode defaults to disable-all (empty string). Setting this explicitly
-   * overrides both the tool default and the CODEX_MCP_SERVERS env var.
+   * (comma-separated list, "inherit", raw TOML, or empty string to disable all
+   * non-required servers). Servers marked `required = true` in `config.toml`
+   * (codex PR #10902) stay enabled regardless of the value — the bridge
+   * refuses to disable them and will warn loudly if the caller's list would
+   * have dropped one. When unset, agentic mode defaults to "serena" so symbol
+   * navigation is available during review; quick mode defaults to disable-all
+   * (empty string). Setting this explicitly overrides both the tool default
+   * and the CODEX_MCP_SERVERS env var.
    */
   mcpServers?: string;
 }
