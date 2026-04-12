@@ -105,10 +105,11 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
   fullPrompt = appendLengthLimit(fullPrompt, maxResponseLength);
 
   const useStdin = fullPrompt.length > STDIN_THRESHOLD || files.length > 0;
-  // Scale timeout: images get 120s base, extra text files add 15s each (beyond the first)
-  const fileBonus = Math.max(0, textFiles.length - 1) * 15_000;
-  const baseTimeout = imageNames.length > 0 ? IMAGE_QUERY_TIMEOUT : 60_000;
-  const defaultTimeout = baseTimeout + fileBonus;
+  // Scale timeout: text files get generous base (180s) + 30s per file to allow
+  // for complex multi-file analysis. Images add their own 120s base on top.
+  const textFileTimeout = textFiles.length > 0 ? 180_000 + textFiles.length * 30_000 : 0;
+  const imageBaseTimeout = imageNames.length > 0 ? IMAGE_QUERY_TIMEOUT : 0;
+  const defaultTimeout = Math.max(textFileTimeout + imageBaseTimeout, 60_000);
   const effectiveTimeout = Math.min(timeout ?? defaultTimeout, HARD_TIMEOUT_CAP);
 
   // Reset session if requested: delete stored state so the resume block below is a no-op
