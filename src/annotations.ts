@@ -48,6 +48,14 @@ export const listSessionsAnnotations: ToolAnnotations = {
   openWorldHint: false,
 };
 
+export const queryAnnotations: ToolAnnotations = {
+  title: "Quick Query",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
 export const pingAnnotations: ToolAnnotations = {
   title: "Health Check",
   readOnlyHint: true,
