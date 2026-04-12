@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-12
+
 ### Fixed
 
 - Concurrency queue leak: `acquireSlot` did not remove its own entry from the
@@ -18,12 +20,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `query` tool: lightweight, non-agentic text analysis. Spawns in an isolated
+  temp directory with `--sandbox read-only --skip-git-repo-check --ephemeral`.
+  No file reading, no session state, all non-required MCP servers disabled.
+  Supports `reasoningEffort` and `maxResponseLength`.
 - Progress heartbeats: `codex`, `review`, and `search` tools emit MCP
   `notifications/progress` every 15s during subprocess execution when the
   client provides a `progressToken` in `_meta`. Fire-and-forget (silent on
   unsupported clients).
 - `ping` output now includes `activeCount` and `queueDepth` for faster
   diagnosis of queue state from a live bridge.
+- MCP server controls: per-server enable grammar via `CODEX_MCP_SERVERS` env
+  var. Modes: unset (disable all non-required), `inherit` (pass through),
+  `{`/`[` prefix (raw TOML), or comma-separated server names. `review` agentic
+  mode defaults to enabling `serena`.
+- `codex` tool description now includes tool selection guidance to help LLMs
+  pick the right tool. Review timeout auto-scales with `git diff --numstat`
+  file count.
 
 ## [0.2.0] - 2026-04-08
 
