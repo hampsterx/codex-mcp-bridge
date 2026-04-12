@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-12
+
+### Changed
+
+- CI publish workflow switched to OIDC trusted publishing with provenance
+
 ## [0.2.1] - 2026-04-12
 
 ### Fixed
