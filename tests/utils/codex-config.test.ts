@@ -4,7 +4,6 @@ import {
   readCodexConfig,
   listMcpServerNames,
   listMcpServers,
-  buildDisableArgs,
   buildMcpArgs,
   quoteKey,
   resolveCodexConfigPath,
@@ -90,6 +89,13 @@ describe("listMcpServerNames", () => {
     const config = readCodexConfig(fixture("codex-home-quoted"));
     expect(listMcpServerNames(config)).toEqual(["weird.name"]);
   });
+
+  it("returns [] when mcp_servers is an array (not a table)", () => {
+    // Guard against a malformed config like `mcp_servers = ["serena"]`.
+    // `typeof [] === "object"` so without an Array.isArray check the bridge
+    // would treat array indices as server names and emit bogus overrides.
+    expect(listMcpServerNames({ mcp_servers: ["serena"] as unknown as Record<string, unknown> })).toEqual([]);
+  });
 });
 
 describe("quoteKey", () => {
@@ -110,35 +116,6 @@ describe("quoteKey", () => {
   });
 });
 
-describe("buildDisableArgs", () => {
-  it("returns [] for an empty list", () => {
-    expect(buildDisableArgs([])).toEqual([]);
-  });
-
-  it("emits a stable sorted sequence of -c entries", () => {
-    expect(buildDisableArgs(["serena", "playwright", "github"])).toEqual([
-      "-c", "mcp_servers.github.enabled=false",
-      "-c", "mcp_servers.playwright.enabled=false",
-      "-c", "mcp_servers.serena.enabled=false",
-    ]);
-  });
-
-  it("quotes names that are not bare TOML keys", () => {
-    expect(buildDisableArgs(["weird.name", "ck-search"])).toEqual([
-      "-c", "mcp_servers.ck-search.enabled=false",
-      "-c", 'mcp_servers."weird.name".enabled=false',
-    ]);
-  });
-
-  it("respects an optional except to keep one server enabled", () => {
-    expect(buildDisableArgs(["github", "playwright", "serena"], "serena")).toEqual([
-      "-c", "mcp_servers.github.enabled=false",
-      "-c", "mcp_servers.playwright.enabled=false",
-      "-c", "mcp_servers.serena.enabled=true",
-    ]);
-  });
-});
-
 describe("listMcpServers", () => {
   it("returns [] when config is null", () => {
     expect(listMcpServers(null)).toEqual([]);
@@ -146,6 +123,12 @@ describe("listMcpServers", () => {
 
   it("returns [] when mcp_servers is missing", () => {
     expect(listMcpServers({})).toEqual([]);
+  });
+
+  it("returns [] when mcp_servers is an array (not a table)", () => {
+    expect(
+      listMcpServers({ mcp_servers: ["serena"] as unknown as Record<string, unknown> }),
+    ).toEqual([]);
   });
 
   it("returns required=false for servers without the flag", () => {

@@ -72,7 +72,12 @@ export function readCodexConfig(path: string = resolveCodexConfigPath()): CodexC
  * Order: lexicographic for stable output.
  */
 export function listMcpServerNames(config: CodexConfig | null): string[] {
-  if (!config || !config.mcp_servers || typeof config.mcp_servers !== "object") {
+  if (
+    !config ||
+    !config.mcp_servers ||
+    typeof config.mcp_servers !== "object" ||
+    Array.isArray(config.mcp_servers)
+  ) {
     return [];
   }
   return Object.keys(config.mcp_servers).sort();
@@ -89,7 +94,12 @@ export function listMcpServerNames(config: CodexConfig | null): string[] {
  * Order: lexicographic for stable output.
  */
 export function listMcpServers(config: CodexConfig | null): ConfiguredServer[] {
-  if (!config || !config.mcp_servers || typeof config.mcp_servers !== "object") {
+  if (
+    !config ||
+    !config.mcp_servers ||
+    typeof config.mcp_servers !== "object" ||
+    Array.isArray(config.mcp_servers)
+  ) {
     return [];
   }
   const result: ConfiguredServer[] = [];
@@ -184,13 +194,3 @@ export function buildMcpArgs(
   return out;
 }
 
-/**
- * Build CLI args that disable every listed MCP server, optionally keeping
- * one enabled via `except`. Thin wrapper over {@link buildMcpArgs} for
- * backward-compatible call sites; new code should prefer `buildMcpArgs`.
- */
-export function buildDisableArgs(names: string[], except?: string): string[] {
-  const configured: ConfiguredServer[] = names.map((name) => ({ name, required: false }));
-  const enabled = except ? new Set([except]) : undefined;
-  return buildMcpArgs(configured, enabled);
-}
