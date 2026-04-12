@@ -8,9 +8,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2)](https://modelcontextprotocol.io/)
 
-MCP server that wraps [Codex CLI](https://github.com/openai/codex) as a subprocess, exposing code execution, agentic review, web search, and structured output as MCP tools.
+MCP server that wraps [Codex CLI](https://github.com/openai/codex) as a subprocess, exposing code execution, agentic review, web search, and structured output as [Model Context Protocol](https://modelcontextprotocol.io/) tools.
 
-Works with any MCP-compatible client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code.
+Works with any MCP client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code, or any tool that speaks MCP.
 
 ## Do you need this?
 
@@ -45,12 +45,6 @@ codex exec "Analyze src/utils/parse.ts for edge cases"
 npx codex-mcp-bridge
 ```
 
-Or install globally:
-
-```bash
-npm i -g codex-mcp-bridge
-```
-
 ### Prerequisites
 
 - [Codex CLI](https://github.com/openai/codex) installed (`npm i -g @openai/codex`)
@@ -59,20 +53,33 @@ npm i -g codex-mcp-bridge
 ### Claude Code
 
 ```bash
-claude mcp add codex-bridge -- npx codex-mcp-bridge
+claude mcp add codex-bridge -- npx -y codex-mcp-bridge
 ```
 
-### MCP settings.json
+### Gemini CLI
 
+Add to `~/.gemini/settings.json`:
 ```json
 {
   "mcpServers": {
     "codex-bridge": {
       "command": "npx",
-      "args": ["-y", "codex-mcp-bridge"],
-      "env": {
-        "OPENAI_API_KEY": "sk-..."
-      }
+      "args": ["-y", "codex-mcp-bridge"]
+    }
+  }
+}
+```
+
+### Cursor / Windsurf / VS Code
+
+Add to your MCP settings:
+```json
+{
+  "codex-bridge": {
+    "command": "npx",
+    "args": ["-y", "codex-mcp-bridge"],
+    "env": {
+      "OPENAI_API_KEY": "sk-..."
     }
   }
 }
@@ -80,151 +87,109 @@ claude mcp add codex-bridge -- npx codex-mcp-bridge
 
 ## Tools
 
-| Tool | Description | Default Timeout |
-|------|-------------|-----------------|
-| `codex` | Execute prompts with file context, session resume, sandbox control | 60s |
-| `review` | Agentic repo-aware code review (Codex explores repo in full-auto) | 300s (agentic) / 120s (quick) |
-| `search` | Web search via `codex --search` | 120s |
-| `query` | Lightweight text analysis (no repo context, no sessions) | 60s |
-| `structured` | JSON Schema validated output | 60s |
-| `ping` | Health check + CLI capability detection | 10s |
-| `listSessions` | List active Codex conversation sessions | 30s |
+| Tool | Description |
+|------|-------------|
+| **codex** | Execute prompts with file context, session resume, and sandbox control. Multi-turn conversations via session IDs. |
+| **review** | Agentic code review. Codex runs in full-auto inside the repo: diffs, reads files, follows imports, checks tests. Quick diff-only mode available. |
+| **search** | Web search via `codex --search`. Returns synthesized answers with source URLs. |
+| **query** | Lightweight text analysis. No repo context, no sessions. Runs in an isolated temp directory. |
+| **structured** | JSON Schema validated output via [Ajv](https://ajv.js.org/). Data extraction, classification, or any task needing machine-parseable output. |
+| **ping** | Health check with CLI version, capabilities, and concurrency diagnostics (`activeCount`, `queueDepth`). |
+| **listSessions** | List active conversation sessions with metadata (turn count, model, timestamps). |
 
 ### codex
 
-General-purpose execution. Supports multi-turn conversations via session IDs, sandbox levels (`read-only`, `workspace-write`, `full-auto`), and reasoning effort control. Pass `resetSession: true` to discard an existing session and start fresh. Use `listSessions` to inspect active sessions before resuming.
+General-purpose execution. Supports multi-turn conversations via `sessionId`, sandbox levels (`read-only`, `workspace-write`, `full-auto`), and reasoning effort control. Pass `resetSession: true` to discard and start fresh. Use `listSessions` to inspect active sessions before resuming.
+
+Key parameters: `prompt` (required), `files`, `model`, `sessionId`, `sandbox`, `reasoningEffort`, `workingDirectory`, `timeout` (default 60s).
 
 ### review
 
 Two modes:
+- **Agentic** (default): Codex runs in `--full-auto` inside the repo. It diffs, reads files, follows imports, checks tests, and reads project instruction files before reviewing. Timeout auto-scales from diff size.
+- **Quick** (`quick: true`): Diff-only review, no repo exploration. Faster but less context.
 
-- **Agentic (default)**: Codex CLI runs in `--full-auto` mode inside the repo. It runs `git diff`, reads full files, follows imports, checks tests, and reads project instruction files before reviewing.
-- **Quick** (`quick: true`): Sends only the diff text. Single-pass, no repo exploration.
-
-> **Note on semantic code navigation**: Codex CLI has no built-in LSP support (tracking upstream [openai/codex#8745](https://github.com/openai/codex/issues/8745)). Agentic review uses `cat`/`grep`/`rg` for repo exploration, which is sufficient for diff-aware review in practice.
+Key parameters: `uncommitted` (default true), `base`, `focus`, `quick`, `workingDirectory`, `timeout` (default 300s agentic, 120s quick).
 
 ### search
 
-Web search powered by Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
+Web search via Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
+
+Key parameters: `query` (required), `model`, `workingDirectory`, `timeout` (default 120s).
 
 ### query
 
-Lightweight, non-agentic query for analysis or opinions on text you already have. No file reading, no repo exploration, no session state. Spawns in an isolated temp directory so the bridge's own repo context doesn't leak. Pass text to analyze in the `context` parameter. Supports `reasoningEffort` control.
+Lightweight, non-agentic text analysis. Spawns in an isolated temp directory so the bridge's repo context doesn't leak. Pass text to analyze in the `context` parameter. Supports `reasoningEffort` and `maxResponseLength`.
+
+Key parameters: `prompt` (required), `context`, `model`, `reasoningEffort`, `timeout` (default 60s).
 
 ### structured
 
-Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns the raw JSON on success, validation errors on failure.
+Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns clean JSON on success, validation errors on failure.
 
-### listSessions
-
-Returns a JSON array of active conversation sessions. Each entry includes `sessionId`, `conversationId`, `model`, `createdAt`, `lastUsedAt`, and `turnCount`. Always returns JSON, even when empty.
+Key parameters: `prompt` (required), `schema` (required, JSON string), `files`, `model`, `workingDirectory`, `timeout` (default 60s).
 
 ### ping
 
-Returns CLI version, available features, model configuration, and concurrency diagnostics (`activeCount`, `queueDepth`). Useful for health monitoring and debugging concurrency issues.
+No parameters. Returns CLI version, auth status, model configuration, and concurrency diagnostics (`activeCount`, `queueDepth`).
 
-### Execution metadata
-
-All tools attach `_meta` to the `CallToolResult` with execution metadata:
-
-| Field | Type | Present on |
-|-------|------|------------|
-| `durationMs` | number | All tools |
-| `model` | string | Tools that run Codex CLI |
-| `fallbackUsed` | boolean | Tools that run Codex CLI |
-| `sessionId` | string | `codex` tool only |
-| `conversationId` | string | `codex` tool only |
-
-Useful for orchestrating agents that need to track latency, detect quota fallback, or manage session state.
-
-### MCP annotations
-
-All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so MCP clients can make informed permission and safety decisions. The `codex` and `review` tools are marked destructive (full-auto sandbox mode can write files); `search`, `query`, `structured`, `listSessions`, and `ping` are read-only.
+All tools attach execution metadata (`_meta`) with `durationMs`, `model`, `fallbackUsed`, and session info where applicable. See [DESIGN.md](DESIGN.md) for details.
 
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `CODEX_DEFAULT_MODEL` | _(CLI default)_ | Default model for all tools |
-| `CODEX_FALLBACK_MODEL` | `o3` | Fallback on quota exhaustion. `none` to disable |
-| `CODEX_CLI_PATH` | `codex` | Path to Codex CLI binary |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEX_DEFAULT_MODEL` | *(CLI default)* | Default model for all tools |
+| `CODEX_FALLBACK_MODEL` | `o3` | Fallback on quota exhaustion (`none` to disable) |
+| `CODEX_CLI_PATH` | `codex` | Path to CLI binary |
 | `CODEX_MAX_CONCURRENT` | `3` | Max concurrent subprocess spawns |
-| `CODEX_MCP_SERVERS` | _(unset)_ | Control Codex's internal MCP servers. See below. |
-| `CODEX_HOME` | `~/.codex` | Directory holding Codex's `config.toml`. Honored when enumerating servers. |
+| `CODEX_MCP_SERVERS` | *(unset)* | Control which Codex internal MCP servers stay enabled. See [DESIGN.md](DESIGN.md#codex-internal-mcp-server-control). |
 
-### `CODEX_MCP_SERVERS`
+## Choosing a Codex MCP server
 
-When the bridge spawns Codex, any MCP servers in `~/.codex/config.toml`
-(`[mcp_servers.*]`) would otherwise load inside Codex and add 30-120s of
-startup overhead per call. The bridge already feeds context via prompt + files,
-so most nested MCP servers are pure overhead. This env var controls which
-servers the bridge keeps enabled:
-
-| Mode | Value | Behavior |
-|------|-------|----------|
-| **Disable-all** (fastest, default) | unset / empty / whitespace-only | Read `$CODEX_HOME/config.toml` and emit `-c mcp_servers.NAME.enabled=false` for every configured server (except any marked `required = true`, which are always kept enabled). |
-| **Selective enable** | comma-separated names, e.g. `serena,ck-search` | Enable exactly the listed servers, disable every other configured server (except required ones). Whitespace trimmed, empty items filtered, duplicates deduped, unknown names warned to stderr and ignored. |
-| **Inherit** | `inherit` (exact, case-sensitive) | Pass through whatever's in config unchanged. Use this if you want every configured server available inside the Codex session. |
-| **Raw TOML** | value starting with `{` or `[` | Forwarded verbatim as `-c mcp_servers=<value>`. Escape hatch for advanced cases. |
-
-Branches are evaluated top-to-bottom: `CODEX_MCP_SERVERS=inherit` is matched
-before the selective-enable branch, and a value beginning with `{` or `[` is
-always raw TOML regardless of commas inside.
-
-**Required servers.** Codex PR
-[#10902](https://github.com/openai/codex/pull/10902) added a `required = true`
-flag under `[mcp_servers.NAME]`. When set, the bridge refuses to disable that
-server even if your `CODEX_MCP_SERVERS` list would otherwise drop it, and emits
-a loud warning to stderr. The flag is read directly from `config.toml`, so
-tagging a critical server as `required = true` is the right way to make it
-survive any caller's disable list.
-
-**Per-tool defaults.** The `review` tool's agentic mode defaults to
-`CODEX_MCP_SERVERS=serena` so symbol navigation is available during review
-without you having to set the env var. Pass the `mcpServers` tool parameter
-to override per-invocation (e.g. `"ck-search,serena"` for deeper review, or
-`"inherit"` to debug). Quick review mode and all other tools stay disable-all.
-
-**Why per-server enumeration instead of `mcp_servers={}`?** On older Codex
-versions a blanket `-c mcp_servers={}` override silently no-ops: config
-merging preserves the existing server table rather than replacing it
-(upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045)).
-Per-server `enabled=false` is the only reliable disable path.
-
-**Grammar narrowing (unreleased).** Older builds of the bridge treated *any*
-non-empty non-`inherit` value as raw TOML. From this release on, only values
-whose first non-whitespace char is `{` or `[` are treated as raw TOML; every
-other non-keyword value is a comma-separated enable list. The env var was
-unreleased when the grammar changed.
-
-If `$CODEX_HOME/config.toml` fails to parse, the bridge throws an actionable
-error. Set `CODEX_MCP_SERVERS=inherit` to bypass the override entirely.
+| You need... | Consider |
+|-------------|----------|
+| Agentic code review, structured output, model fallback, concurrency management | This bridge |
+| Session threading with `conversationId`, callback URI forwarding | [@tuannvm/codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) |
+| Structured patch output with approval policies | [cexll/codex-mcp-server](https://github.com/cexll/codex-mcp-server) |
+| Minimal `codex exec` wrapper with parallel subagents | [codex-as-mcp](https://github.com/kky42/codex-as-mcp) |
+| Native Codex MCP (experimental, no wrapper needed) | `codex mcp serve` ([docs](https://github.com/openai/codex)) |
 
 ## Performance
 
-Each tool invocation spawns a fresh Codex CLI process. Codex CLI has minimal startup overhead (<100ms), so wall time is dominated by model inference.
+Codex CLI has minimal startup overhead (<100ms), so wall time is dominated by model inference.
 
-Approximate timings with `o4-mini` (Codex CLI default). Actual times vary with model load and network conditions.
+| Scenario | Typical time |
+|----------|-------------|
+| Trivial prompt | 9-12s |
+| Quick review, small diff (1KB) | ~20s |
+| Quick review, medium diff (24KB) | ~35s |
+| Quick review, large diff (54KB) | ~40s |
+| Web search | ~17s |
 
-| Scenario | Typical time | Tokens in |
-|----------|-------------|-----------|
-| Trivial prompt ("pong") | 9-12s | 32K |
-| Quick review, small diff (1KB) | ~20s | 32K |
-| Quick review, medium diff (24KB) | ~35s | 38K |
-| Quick review, large diff (54KB) | ~40s | 47K |
-| Web search | ~17s | 36K |
+Default timeouts (60-300s) are comfortable for typical workloads.
 
-Inference time scales sub-linearly with diff size. The default timeouts (60-300s) are comfortable for typical workloads.
+## Bridge family
 
-## Security
+Three MCP servers, same architecture, different underlying CLIs. Each wraps a terminal agent as a subprocess and exposes it as MCP tools. Pick the one that matches your model provider, or run multiple for cross-model workflows.
 
-- **Env allowlist**: Only explicit keys forwarded to subprocess (no wildcard `OPENAI_*`)
-- **Path sandboxing**: All file paths resolved via `realpath` with root boundary check
-- **Shell: false**: Always `spawn()` with args array, never shell execution
-- **Concurrency**: Max 3 concurrent, FIFO queue, 30s queue timeout
-- **Timeouts**: Per-tool defaults, 600s hard cap. SIGTERM -> 5s grace -> SIGKILL
-- **File limits**: 1MB text, 5MB image, 20 files max
-- **Log redaction**: Strips potential secrets (API keys, tokens) from CLI output
+| | [codex-mcp-bridge](https://github.com/hampsterx/codex-mcp-bridge) | [claude-mcp-bridge](https://github.com/hampsterx/claude-mcp-bridge) | [gemini-mcp-bridge](https://github.com/hampsterx/gemini-mcp-bridge) |
+|---|---|---|---|
+| **CLI** | Codex CLI | Claude Code | Gemini CLI |
+| **Provider** | OpenAI | Anthropic | Google |
+| **Tools** | codex, review, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping |
+| **Agentic review** | Codex explores repo in full-auto mode | Claude explores repo with Read/Grep/Glob/git | Gemini explores repo with file reads and git |
+| **Structured output** | Ajv validation | Native `--json-schema` | Ajv validation |
+| **Session resume** | Session IDs with multi-turn | Native `--resume` | Not supported |
+| **Budget caps** | Not supported | Native `--max-budget-usd` | Not supported |
+| **Effort control** | `reasoningEffort` (low/medium/high) | `--effort low/medium/high/max` | Not supported |
+| **Cold start** | <100ms (inference dominates) | ~1-2s | ~16s |
+| **Auth** | `OPENAI_API_KEY` | `claude login` (subscription) or `ANTHROPIC_API_KEY` | `gemini auth login` |
+| **Cost** | Pay-per-token | Subscription (included) or API credits | Free tier available |
+| **Concurrency** | 3 (configurable) | 3 (configurable) | 3 (configurable) |
+| **Model fallback** | Auto-retry with fallback model | Auto-retry with fallback model | Auto-retry with fallback model |
+
+All three share: subprocess env isolation, path sandboxing, FIFO concurrency queue, MCP tool annotations, `_meta` response metadata, progress heartbeats. The codex and claude bridges also perform output redaction (secret stripping).
 
 ## Development
 
@@ -237,24 +202,11 @@ npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
 ```
 
-## How does this compare to other Codex MCP servers?
+## Further reading
 
-| | codex-mcp-bridge | [@tuannvm/codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) |
-|---|---|---|
-| **Review mode** | Agentic (CLI explores repo in full-auto) | Diff text sent to CLI |
-| **Structured output** | JSON Schema validated (Ajv) | threadId forwarding |
-| **Model fallback** | Auto-retry with fallback model | No |
-| **Concurrency** | Max 3, FIFO queue | Unbounded |
-| **Output parsing** | Multi-strategy (JSONL/JSON/text fallback) | Basic stderr capture |
-| **Prompt templates** | Editable .md files | Hardcoded |
-| **Security** | Env allowlist, path sandboxing, log redaction | Basic |
-| **Tests** | High coverage including spawn | ~50% coverage |
-
-**When to pick codex-mcp-bridge**: You want agentic code review where Codex explores the repo itself, structured output with schema validation, or hardened subprocess management.
-
-**When to pick @tuannvm/codex-mcp-server**: You want a lighter wrapper with fewer opinions, or you're already using it and it meets your needs.
-
-Know of another Codex MCP server? Open an issue and we'll add it to the table.
+- [DESIGN.md](DESIGN.md) - Architecture, MCP server control grammar, sessions, output parsing, response metadata
+- [SECURITY.md](SECURITY.md) - Environment isolation, path sandboxing, output redaction, resource limits
+- [CHANGELOG.md](CHANGELOG.md) - Release history
 
 ## License
 
