@@ -1,0 +1,12 @@
+model = "gpt-5-codex"
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+
+[mcp_servers.serena]
+command = "uv"
+args = ["run", "serena-mcp-server"]

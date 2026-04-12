@@ -99,6 +99,8 @@ Two modes:
 - **Agentic (default)**: Codex CLI runs in `--full-auto` mode inside the repo. It runs `git diff`, reads full files, follows imports, checks tests, and reads project instruction files before reviewing.
 - **Quick** (`quick: true`): Sends only the diff text. Single-pass, no repo exploration.
 
+> **Note on semantic code navigation**: Codex CLI has no built-in LSP support (tracking upstream [openai/codex#8745](https://github.com/openai/codex/issues/8745)). Agentic review uses `cat`/`grep`/`rg` for repo exploration, which is sufficient for diff-aware review in practice.
+
 ### search
 
 Web search powered by Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
@@ -115,6 +117,56 @@ Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns 
 | `CODEX_FALLBACK_MODEL` | `o3` | Fallback on quota exhaustion. `none` to disable |
 | `CODEX_CLI_PATH` | `codex` | Path to Codex CLI binary |
 | `CODEX_MAX_CONCURRENT` | `3` | Max concurrent subprocess spawns |
+| `CODEX_MCP_SERVERS` | _(unset)_ | Control Codex's internal MCP servers. See below. |
+| `CODEX_HOME` | `~/.codex` | Directory holding Codex's `config.toml`. Honored when enumerating servers. |
+
+### `CODEX_MCP_SERVERS`
+
+When the bridge spawns Codex, any MCP servers in `~/.codex/config.toml`
+(`[mcp_servers.*]`) would otherwise load inside Codex and add 30-120s of
+startup overhead per call. The bridge already feeds context via prompt + files,
+so most nested MCP servers are pure overhead. This env var controls which
+servers the bridge keeps enabled:
+
+| Mode | Value | Behavior |
+|------|-------|----------|
+| **Disable-all** (fastest, default) | unset / empty / whitespace-only | Read `$CODEX_HOME/config.toml` and emit `-c mcp_servers.NAME.enabled=false` for every configured server (except any marked `required = true`, which are always kept enabled). |
+| **Selective enable** | comma-separated names, e.g. `serena,ck-search` | Enable exactly the listed servers, disable every other configured server (except required ones). Whitespace trimmed, empty items filtered, duplicates deduped, unknown names warned to stderr and ignored. |
+| **Inherit** | `inherit` (exact, case-sensitive) | Pass through whatever's in config unchanged. Use this if you want every configured server available inside the Codex session. |
+| **Raw TOML** | value starting with `{` or `[` | Forwarded verbatim as `-c mcp_servers=<value>`. Escape hatch for advanced cases. |
+
+Branches are evaluated top-to-bottom: `CODEX_MCP_SERVERS=inherit` is matched
+before the selective-enable branch, and a value beginning with `{` or `[` is
+always raw TOML regardless of commas inside.
+
+**Required servers.** Codex PR
+[#10902](https://github.com/openai/codex/pull/10902) added a `required = true`
+flag under `[mcp_servers.NAME]`. When set, the bridge refuses to disable that
+server even if your `CODEX_MCP_SERVERS` list would otherwise drop it, and emits
+a loud warning to stderr. The flag is read directly from `config.toml`, so
+tagging a critical server as `required = true` is the right way to make it
+survive any caller's disable list.
+
+**Per-tool defaults.** The `review` tool's agentic mode defaults to
+`CODEX_MCP_SERVERS=serena` so symbol navigation is available during review
+without you having to set the env var. Pass the `mcpServers` tool parameter
+to override per-invocation (e.g. `"ck-search,serena"` for deeper review, or
+`"inherit"` to debug). Quick review mode and all other tools stay disable-all.
+
+**Why per-server enumeration instead of `mcp_servers={}`?** On older Codex
+versions a blanket `-c mcp_servers={}` override silently no-ops: config
+merging preserves the existing server table rather than replacing it
+(upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045)).
+Per-server `enabled=false` is the only reliable disable path.
+
+**Grammar narrowing (unreleased).** Older builds of the bridge treated *any*
+non-empty non-`inherit` value as raw TOML. From this release on, only values
+whose first non-whitespace char is `{` or `[` are treated as raw TOML; every
+other non-keyword value is a comma-separated enable list. The env var was
+unreleased when the grammar changed.
+
+If `$CODEX_HOME/config.toml` fails to parse, the bridge throws an actionable
+error. Set `CODEX_MCP_SERVERS=inherit` to bypass the override entirely.
 
 ## Performance
 

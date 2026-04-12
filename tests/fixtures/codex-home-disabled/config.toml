@@ -1,0 +1,10 @@
+model = "gpt-5-codex"
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+
+[mcp_servers.serena]
+command = "uv"
+args = ["run", "serena-mcp-server"]
+enabled = false

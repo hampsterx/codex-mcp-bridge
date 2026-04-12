@@ -5,6 +5,7 @@ import { loadPrompt, buildLengthLimit } from "../utils/prompts.js";
 import { verifyDirectory } from "../utils/security.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
+import { getMcpServerOverride } from "../utils/env.js";
 
 export interface SearchInput {
   query: string;
@@ -49,7 +50,7 @@ export async function executeSearch(input: SearchInput): Promise<SearchResult> {
     (m, t) => {
       // codex --search exec --skip-git-repo-check "prompt"
       // --search goes before exec subcommand
-      const args: string[] = ["--search", "exec"];
+      const args: string[] = ["--search", "exec", ...getMcpServerOverride()];
       if (m) args.push("--model", m);
       args.push("--skip-git-repo-check");
       return spawnCodex({ args, cwd, stdin: prompt, timeout: t });

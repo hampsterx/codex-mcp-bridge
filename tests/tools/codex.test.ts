@@ -13,6 +13,24 @@ vi.mock("../../src/utils/spawn.js", () => ({
 
 import { buildArgs, executeCodex } from "../../src/tools/codex.js";
 
+// Inherit keeps the override empty so tool-level tests don't depend on
+// ~/.codex/config.toml contents. Override semantics are tested in env.test.ts
+// and codex-config.test.ts.
+const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+const origCodexHome = process.env["CODEX_HOME"];
+
+beforeEach(() => {
+  process.env["CODEX_MCP_SERVERS"] = "inherit";
+  delete process.env["CODEX_HOME"];
+});
+
+afterEach(() => {
+  if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+  else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+  if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+  else process.env["CODEX_HOME"] = origCodexHome;
+});
+
 describe("buildArgs", () => {
   it("builds basic exec args with json and sandbox", () => {
     expect(buildArgs({

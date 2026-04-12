@@ -1,0 +1,4 @@
+# TOML quoted key: name contains a character outside [A-Za-z0-9_-]
+[mcp_servers."weird.name"]
+command = "node"
+args = ["/tmp/weird.js"]

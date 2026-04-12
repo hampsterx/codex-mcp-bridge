@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, verifyDirectoryMock } = vi.hoisted(() => ({
@@ -20,11 +20,23 @@ vi.mock("../../src/utils/security.js", async () => {
 
 import { executeSearch } from "../../src/tools/search.js";
 
+const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+const origCodexHome = process.env["CODEX_HOME"];
+
 describe("executeSearch", () => {
   beforeEach(() => {
     spawnCodexMock.mockReset();
     verifyDirectoryMock.mockReset();
     verifyDirectoryMock.mockResolvedValue("/repo");
+    process.env["CODEX_MCP_SERVERS"] = "inherit";
+    delete process.env["CODEX_HOME"];
+  });
+
+  afterEach(() => {
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
   });
 
   it("places --search before exec and uses stdin prompt", async () => {

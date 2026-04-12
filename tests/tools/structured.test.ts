@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => ({
@@ -29,6 +29,9 @@ vi.mock("../../src/utils/files.js", async () => {
 
 import { executeStructured } from "../../src/tools/structured.js";
 
+const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+const origCodexHome = process.env["CODEX_HOME"];
+
 describe("executeStructured", () => {
   beforeEach(() => {
     spawnCodexMock.mockReset();
@@ -36,6 +39,15 @@ describe("executeStructured", () => {
     readFilesMock.mockReset();
     verifyDirectoryMock.mockResolvedValue("/repo");
     readFilesMock.mockResolvedValue([]);
+    process.env["CODEX_MCP_SERVERS"] = "inherit";
+    delete process.env["CODEX_HOME"];
+  });
+
+  afterEach(() => {
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
   });
 
   it("returns validated JSON output", async () => {

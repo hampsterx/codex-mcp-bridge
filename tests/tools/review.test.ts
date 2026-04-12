@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
+
+const FIXTURES = join(process.cwd(), "tests", "fixtures");
 
 const {
   spawnCodexMock,
@@ -35,6 +38,11 @@ vi.mock("../../src/utils/git.js", () => ({
 
 import { executeReview } from "../../src/tools/review.js";
 
+// Inherit keeps the override empty so tool-level tests don't depend on
+// ~/.codex/config.toml contents.
+const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+const origCodexHome = process.env["CODEX_HOME"];
+
 describe("executeReview", () => {
   beforeEach(() => {
     spawnCodexMock.mockReset();
@@ -45,6 +53,16 @@ describe("executeReview", () => {
 
     verifyDirectoryMock.mockResolvedValue("/repo/requested");
     getGitRootMock.mockReturnValue("/repo/root");
+
+    process.env["CODEX_MCP_SERVERS"] = "inherit";
+    delete process.env["CODEX_HOME"];
+  });
+
+  afterEach(() => {
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
   });
 
   it("uses full-auto for agentic review and returns parsed response", async () => {
@@ -88,6 +106,214 @@ describe("executeReview", () => {
     expect(result.mode).toBe("quick");
     expect(result.response).toBe("No uncommitted changes found");
     expect(result.model).toBeUndefined();
+  });
+
+  it("agentic mode defaults to CODEX_MCP_SERVERS=serena (enables serena, disables others)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "review findings",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    // Point at the mixed fixture (github, playwright, serena) and clear env so
+    // the tool default takes effect.
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({
+      quick: false,
+      uncommitted: true,
+      model: "o3",
+      workingDirectory: "/repo/requested",
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    // serena explicitly enabled (so config.toml enabled=false would still be
+    // overridden), github + playwright disabled.
+    expect(call.args).toEqual([
+      "exec",
+      "-c", "mcp_servers.github.enabled=false",
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=true",
+      "--model", "o3",
+      "--full-auto",
+      "--skip-git-repo-check",
+    ]);
+  });
+
+  it("quick mode default is disable-all (no serena default)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "quick review",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({
+      quick: true,
+      uncommitted: true,
+      model: "o3",
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.args).toEqual([
+      "exec",
+      "-c", "mcp_servers.github.enabled=false",
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=false",
+      "--model", "o3",
+      "--sandbox", "read-only",
+      "--skip-git-repo-check",
+    ]);
+  });
+
+  it("agentic tool-default 'serena' is silent when serena is not configured", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "review findings",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    // Fixture has playwright + github only, no serena. The tool default
+    // would normally emit "ignoring unknown MCP server 'serena'" — assert
+    // that doesn't happen because silent:true is passed.
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-url");
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await executeReview({ quick: false, uncommitted: true, model: "o3" });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("explicit mcpServers input parameter keeps warnings noisy", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-url");
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await executeReview({
+        quick: false,
+        uncommitted: true,
+        model: "o3",
+        mcpServers: "serena", // user explicitly asked for a non-existent server
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("ignoring unknown MCP server 'serena'"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("explicit mcpServers input parameter wins over env var and defaults", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    process.env["CODEX_MCP_SERVERS"] = "inherit"; // would normally passthrough
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({
+      quick: false,
+      uncommitted: true,
+      model: "o3",
+      mcpServers: "github", // explicit: enable github only
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.args).toEqual([
+      "exec",
+      "-c", "mcp_servers.github.enabled=true",
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=false",
+      "--model", "o3",
+      "--full-auto",
+      "--skip-git-repo-check",
+    ]);
+  });
+
+  it("agentic default with serena configured loads the serena-aware prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({ quick: false, uncommitted: true, model: "o3" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    // Distinctive markers from review-agentic-with-serena.md
+    expect(call.stdin).toContain("Serena");
+    expect(call.stdin).toContain("get_symbols_overview");
+    expect(call.stdin).toContain("find_referencing_symbols");
+  });
+
+  it("agentic with mcpServers=\"\" loads the generic prompt (no serena markers)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-mixed");
+
+    await executeReview({
+      quick: false,
+      uncommitted: true,
+      model: "o3",
+      mcpServers: "",
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).not.toContain("get_symbols_overview");
+    expect(call.stdin).not.toContain("find_referencing_symbols");
+    // Generic prompt tells the reviewer to read full file contents.
+    expect(call.stdin).toContain("Read the FULL contents");
+  });
+
+  it("agentic default with no serena in config uses the generic prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "ok", stderr: "", exitCode: 0, timedOut: false,
+    });
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    // codex-home-url has no serena; agentic default would ask for serena but
+    // willEnableServer should report false, so generic prompt loads.
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-url");
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await executeReview({ quick: false, uncommitted: true, model: "o3" });
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).not.toContain("get_symbols_overview");
+    expect(call.stdin).toContain("Read the FULL contents");
   });
 
   it("uses read-only sandbox for quick branch review", async () => {

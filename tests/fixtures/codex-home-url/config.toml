@@ -1,0 +1,5 @@
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+
+[mcp_servers.atlassian]
+url = "https://mcp.atlassian.com/v1/sse"

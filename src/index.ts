@@ -195,6 +195,12 @@ Tips:
         .positive()
         .optional()
         .describe("Soft limit on response length in words"),
+      mcpServers: z
+        .string()
+        .optional()
+        .describe(
+          "MCP servers to enable for this review (CODEX_MCP_SERVERS grammar: comma-separated names, 'inherit', raw TOML, or empty to disable all non-required). Servers marked required=true in config.toml stay enabled regardless of the value. Agentic mode default: 'serena'. Quick mode default: empty.",
+        ),
     },
     annotations: reviewAnnotations,
   },
