@@ -151,7 +151,7 @@ any non-empty non-`inherit` value as raw TOML; now only values starting with
 ## CI/CD
 
 - **ci.yml**: lint + typecheck + test + build on PRs (Node 18/20/22)
-- **publish.yml**: validate on `v*` tag push (no auto-publish, npm 2FA requires OTP)
+- **publish.yml**: OIDC trusted publishing on `v*` tag push (lint + test + build + publish with provenance)
 
 ### Release Workflow
 
