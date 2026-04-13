@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-13
+
+### Added
+
+- **Line range specifiers**: file paths now support `path:start-end` syntax
+  (1-based, inclusive) to include only relevant sections, reducing wasted context
+- Timeout scaling for multi-file calls bumped from 60s+15s/file to 180s+30s/file
+
+### Fixed
+
+- Non-zero CLI exits now surface as errors when no response is produced
+- Unsafe error message casts replaced with `toErrorMessage` helper throughout
+- `ping` tool now reports non-ENOENT failures correctly
+- Stale `sessionId` no longer returned after `resetSession`
+- Prompt placeholder collision fixed via single-pass regex replacement
+- Schema size check uses `Buffer.byteLength` instead of `.length`
+- `readFiles` uses per-file try/catch for resilience (one bad path no longer
+  fails the entire batch)
+- `review` validates base refs in both agentic and quick modes
+- Session `get()` returns shallow copies to prevent external mutation
+
+### Changed
+
+- README split into three focused docs: README.md (user-facing), DESIGN.md
+  (architecture), SECURITY.md (hardening details)
+- Error constants consolidated to single sources (HARD_TIMEOUT_CAP in spawn.ts)
+- MCP server override logic extracted into named helpers
+
 ## [0.2.2] - 2026-04-12
 
 ### Changed

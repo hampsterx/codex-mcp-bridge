@@ -1,6 +1,6 @@
 {
   "name": "codex-mcp-bridge",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "MCP server that wraps Codex CLI for code execution, review, search, and structured output",
   "author": "Tim Birrell",
   "license": "MIT",
