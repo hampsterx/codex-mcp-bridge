@@ -166,7 +166,7 @@ server.registerTool(
     title: "Code Review",
     description: `Repo-aware code review powered by Codex CLI. Returns structured feedback on code changes with two modes:
 
-- Agentic (default): Codex runs inside the repo with full autonomy — reads the diff, explores related files, follows imports, checks tests, and reads project instruction files before reviewing. Best for thorough reviews. Default timeout: 5 minutes.
+- Agentic (default): Codex runs inside the repo with full autonomy — reads the diff, explores related files, follows imports, checks tests, and reads project instruction files before reviewing. Best for thorough reviews. Timeout auto-scales with diff size (180s + 30s/file).
 - Quick (quick: true): Receives only the diff text. Fast single-pass review without repo exploration. Default timeout: 2 minutes.
 
 Tips:
@@ -200,9 +200,9 @@ Tips:
         .number()
         .int()
         .positive()
-        .max(600_000)
+        .max(1_800_000)
         .optional()
-        .describe("Timeout in milliseconds (default: 300000 agentic / 120000 quick, max: 600000)"),
+        .describe("Timeout in milliseconds (agentic default auto-scales: 180s + 30s/file, max 1800000; quick default: 120000)"),
       maxResponseLength: z
         .number()
         .int()
@@ -233,6 +233,12 @@ Tips:
         `Mode: ${result.mode}`,
       ];
       if (result.base) meta.push(`Base: ${result.base}`);
+      if (result.diffStat) {
+        meta.push(`Diff: ${result.diffStat.files} files (+${result.diffStat.insertions} / -${result.diffStat.deletions})`);
+      }
+      if (result.timeoutScaled) {
+        meta.push(`Timeout: ${result.appliedTimeout / 1000}s (auto-scaled from diff size)`);
+      }
       if (result.fallbackUsed) meta.push("Note: fallback model used after quota exhaustion");
       if (result.timedOut) meta.push("(timed out)");
 

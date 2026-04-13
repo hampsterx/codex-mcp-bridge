@@ -9,7 +9,7 @@ const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => 
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
-  HARD_TIMEOUT_CAP: 600_000,
+  HARD_TIMEOUT_CAP: 1_800_000,
 }));
 
 vi.mock("../../src/utils/security.js", async () => {

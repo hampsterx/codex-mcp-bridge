@@ -109,11 +109,11 @@ Two modes:
 - **Agentic** (default): Codex runs in `--full-auto` inside the repo. It diffs, reads files, follows imports, checks tests, and reads project instruction files before reviewing. Timeout auto-scales from diff size.
 - **Quick** (`quick: true`): Diff-only review, no repo exploration. Faster but less context.
 
-Key parameters: `uncommitted` (default true), `base`, `focus`, `quick`, `workingDirectory`, `timeout` (default 300s agentic, 120s quick).
+Key parameters: `uncommitted` (default true), `base`, `focus`, `quick`, `workingDirectory`, `timeout` (default auto-scaled agentic, 120s quick).
 
 ### search
 
-Web search via Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
+Web search powered by OpenAI's native search infrastructure via Codex CLI's `--search` flag. Returns synthesized answers with source URLs.
 
 Key parameters: `query` (required), `model`, `workingDirectory`, `timeout` (default 120s).
 

@@ -1,5 +1,59 @@
 import { execFileSync } from "node:child_process";
 
+export interface DiffStat {
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+export type DiffSpec = { type: "uncommitted" } | { type: "branch"; base: string };
+
+/**
+ * Parse `git diff --numstat` output into a DiffStat summary.
+ *
+ * Binary files (`-\t-\t<path>`) contribute to the file count but not to
+ * line counts. Renames (`{old => new}` in the path) count as a single
+ * file. Exported for unit testing.
+ */
+export function parseNumstat(output: string): DiffStat {
+  const stat: DiffStat = { files: 0, insertions: 0, deletions: 0 };
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    stat.files += 1;
+    const [ins, del] = parts;
+    if (ins !== "-") stat.insertions += parseInt(ins!, 10) || 0;
+    if (del !== "-") stat.deletions += parseInt(del!, 10) || 0;
+  }
+  return stat;
+}
+
+/**
+ * Get numstat summary for a diff spec. Uses `git diff HEAD` for the
+ * uncommitted case so the stat matches what the agentic review prompt
+ * actually executes (`git diff HEAD -U5`). Returns undefined on failure
+ * (non-git dir, empty diff, etc.) rather than throwing.
+ */
+export function getDiffStat(cwd: string, spec: DiffSpec): DiffStat | undefined {
+  const run = (refArgs: string[]): string =>
+    execFileSync("git", ["-C", cwd, "diff", "--numstat", ...refArgs], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+  try {
+    const output = spec.type === "branch"
+      ? run([`${spec.base}...HEAD`])
+      : run(["HEAD"]);
+    const stat = parseNumstat(output);
+    return stat.files > 0 ? stat : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Find the git repository root for a given directory.
  * Throws if not inside a git repo.

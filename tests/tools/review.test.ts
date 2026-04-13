@@ -10,17 +10,19 @@ const {
   getGitRootMock,
   getUncommittedDiffMock,
   getBranchDiffMock,
+  getDiffStatMock,
 } = vi.hoisted(() => ({
   spawnCodexMock: vi.fn<(options: SpawnOptions) => Promise<SpawnResult>>(),
   verifyDirectoryMock: vi.fn<(dir: string) => Promise<string>>(),
   getGitRootMock: vi.fn<(cwd: string) => string>(),
   getUncommittedDiffMock: vi.fn<(cwd: string, contextLines?: number) => string>(),
   getBranchDiffMock: vi.fn<(cwd: string, base: string, contextLines?: number) => string>(),
+  getDiffStatMock: vi.fn(),
 }));
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
-  HARD_TIMEOUT_CAP: 600_000,
+  HARD_TIMEOUT_CAP: 1_800_000,
 }));
 
 vi.mock("../../src/utils/security.js", async () => {
@@ -35,6 +37,7 @@ vi.mock("../../src/utils/git.js", () => ({
   getGitRoot: getGitRootMock,
   getUncommittedDiff: getUncommittedDiffMock,
   getBranchDiff: getBranchDiffMock,
+  getDiffStat: getDiffStatMock,
 }));
 
 import { executeReview } from "../../src/tools/review.js";
@@ -51,9 +54,11 @@ describe("executeReview", () => {
     getGitRootMock.mockReset();
     getUncommittedDiffMock.mockReset();
     getBranchDiffMock.mockReset();
+    getDiffStatMock.mockReset();
 
     verifyDirectoryMock.mockResolvedValue("/repo/requested");
     getGitRootMock.mockReturnValue("/repo/root");
+    getDiffStatMock.mockReturnValue(undefined);
 
     process.env["CODEX_MCP_SERVERS"] = "inherit";
     delete process.env["CODEX_HOME"];
