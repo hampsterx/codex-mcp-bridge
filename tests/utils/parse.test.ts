@@ -69,6 +69,82 @@ describe("parseCodexOutput", () => {
     expect(result.response).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
     expect(result.response).toContain("[REDACTED]");
   });
+
+  it("skips malformed JSONL lines and extracts valid events", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_partial" }),
+      "this is not valid json {{{",
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Partial success" },
+      }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.threadId).toBe("thread_partial");
+    expect(result.response).toBe("Partial success");
+  });
+
+  it("concatenates multiple agent messages from JSONL", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_multi" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Part one" },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_1", type: "agent_message", text: "Part two" },
+      }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.response).toContain("Part one");
+    expect(result.response).toContain("Part two");
+  });
+
+  it("returns fallback message when JSONL has known events but no agent messages", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_empty" }),
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 0 } }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.response).toBe("(no response content in JSONL events)");
+    expect(result.threadId).toBe("thread_empty");
+  });
+
+  it("falls back to plain text when lines are valid JSON but not known event types", () => {
+    const line1 = JSON.stringify({ action: "unknown", data: "value" });
+    const line2 = JSON.stringify({ other: "stuff" });
+    const output = [line1, line2].join("\n");
+    // Neither object has a known type field, so tryParseJsonlEvents returns null.
+    // Falls through to JSON parse which fails (multi-line), then to plain text.
+    const result = parseCodexOutput(output, "");
+    // Plain text fallback returns the full cleaned stdout, preserving both lines.
+    expect(result.response).toContain(line1);
+    expect(result.response).toContain(line2);
+    expect(result.threadId).toBeUndefined();
+  });
+});
+
+describe("parseCodexOutput edge cases", () => {
+  it("prefers stdout JSONL over stderr JSONL", () => {
+    const stdoutEvents = [
+      JSON.stringify({ type: "thread.started", thread_id: "stdout_thread" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "From stdout" },
+      }),
+    ].join("\n");
+    const stderrEvents = [
+      JSON.stringify({ type: "thread.started", thread_id: "stderr_thread" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "From stderr" },
+      }),
+    ].join("\n");
+    const result = parseCodexOutput(stdoutEvents, stderrEvents);
+    expect(result.threadId).toBe("stdout_thread");
+    expect(result.response).toBe("From stdout");
+  });
 });
 
 describe("extractJson", () => {
@@ -111,5 +187,21 @@ describe("redactSecrets", () => {
   it("leaves non-secret text alone", () => {
     const text = "This is a normal response";
     expect(redactSecrets(text)).toBe(text);
+  });
+
+  it("redacts multiple secrets in one string", () => {
+    const text = "Key: sk-abcdefghijklmnopqrstuvwxyz and Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6";
+    const result = redactSecrets(text);
+    expect(result).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
+    expect(result).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6");
+    expect((result.match(/\[REDACTED\]/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("redacts Anthropic API keys", () => {
+    expect(redactSecrets("key: sk-ant-apiabc123def456ghi789jkl")).toContain("[REDACTED]");
+  });
+
+  it("redacts generic token assignments", () => {
+    expect(redactSecrets("token=abc12345678901234567890")).toContain("[REDACTED]");
   });
 });

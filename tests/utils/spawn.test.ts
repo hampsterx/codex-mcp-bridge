@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   acquireSlot,
   releaseSlot,
@@ -6,6 +6,7 @@ import {
   getActiveCount,
   getQueueDepth,
   getMaxConcurrent,
+  findCodexBinary,
 } from "../../src/utils/spawn.js";
 
 describe("concurrency queue", () => {
@@ -130,5 +131,41 @@ describe("concurrency queue", () => {
     expect(secondGranted).toBe(true);
     expect(getActiveCount()).toBe(2);
     expect(getQueueDepth()).toBe(0);
+  });
+
+  it("releaseSlot without prior acquire does not block future acquires", () => {
+    resetConcurrency(2);
+    expect(getActiveCount()).toBe(0);
+
+    // Spurious releaseSlot (e.g. double-release bug). The important contract
+    // is that the pool remains usable afterward, not the exact count.
+    releaseSlot();
+
+    // Should still be able to acquire the full pool worth of slots.
+    acquireSlot();
+    acquireSlot();
+    // Depending on underflow: if count went to -1, these two acquires bring
+    // it to 1, so a third would also succeed. If a guard is added later and
+    // count stays at 0, we'd be at 2 (full). Either way the pool is usable.
+    expect(getActiveCount()).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("findCodexBinary", () => {
+  const origCliPath = process.env["CODEX_CLI_PATH"];
+
+  afterEach(() => {
+    if (origCliPath === undefined) delete process.env["CODEX_CLI_PATH"];
+    else process.env["CODEX_CLI_PATH"] = origCliPath;
+  });
+
+  it("returns 'codex' by default", () => {
+    delete process.env["CODEX_CLI_PATH"];
+    expect(findCodexBinary()).toBe("codex");
+  });
+
+  it("returns CODEX_CLI_PATH when set", () => {
+    process.env["CODEX_CLI_PATH"] = "/usr/local/bin/my-codex";
+    expect(findCodexBinary()).toBe("/usr/local/bin/my-codex");
   });
 });

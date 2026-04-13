@@ -150,6 +150,141 @@ describe("executeCodex", () => {
     expect(result.sessionId).toMatch(/^codex-/);
   });
 
+  it("falls back to JSONL-parsed response when output file is empty", async () => {
+    spawnCodexMock.mockImplementation(async ({ args }) => {
+      const outputIndex = args.indexOf("-o");
+      // Write an empty file (readOutputFile returns undefined)
+      if (outputIndex > -1) {
+        await writeFile(args[outputIndex + 1]!, "", "utf8");
+      }
+      return {
+        stdout: [
+          JSON.stringify({ type: "thread.started", thread_id: "thread_fallback" }),
+          JSON.stringify({
+            type: "item.completed",
+            item: { id: "item_0", type: "agent_message", text: "JSONL fallback response" },
+          }),
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+      };
+    });
+
+    const result = await executeCodex({
+      prompt: "Test fallback",
+      model: "o3",
+    });
+
+    expect(result.response).toBe("JSONL fallback response");
+  });
+
+  it("falls back to JSONL-parsed response when output file does not exist", async () => {
+    spawnCodexMock.mockImplementation(async () => ({
+      stdout: [
+        JSON.stringify({ type: "thread.started", thread_id: "thread_nofile" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_0", type: "agent_message", text: "No file response" },
+        }),
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    }));
+
+    const result = await executeCodex({
+      prompt: "Test no file",
+      model: "o3",
+    });
+
+    // No -o flag means no output file, falls back to JSONL parsing
+    expect(result.response).toBe("No file response");
+  });
+
+  it("skips images exceeding MAX_IMAGE_FILE_SIZE and reports them", async () => {
+    const securityMod = await import("../../src/utils/security.js");
+    const resolveAndVerifySpy = vi.spyOn(securityMod, "resolveAndVerify");
+    const checkFileSizeSpy = vi.spyOn(securityMod, "checkFileSize");
+
+    resolveAndVerifySpy.mockResolvedValue("/resolved/huge.png");
+    checkFileSizeSpy.mockResolvedValue(6_000_000); // 6MB, over 5MB limit
+
+    spawnCodexMock.mockImplementation(async ({ args }) => {
+      const outputIndex = args.indexOf("-o");
+      if (outputIndex > -1) {
+        await writeFile(args[outputIndex + 1]!, "Response\n", "utf8");
+      }
+      return {
+        stdout: JSON.stringify({ type: "thread.started", thread_id: "thread_img" }),
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+      };
+    });
+
+    const result = await executeCodex({
+      prompt: "Analyze image",
+      model: "o3",
+      files: ["huge.png"],
+    });
+
+    expect(result.imagesIncluded).toEqual([]);
+    expect(result.filesSkipped.length).toBe(1);
+    expect(result.filesSkipped[0]).toContain("exceeds");
+
+    resolveAndVerifySpy.mockRestore();
+    checkFileSizeSpy.mockRestore();
+  });
+
+  it("continues without session when sessionStore.set throws", async () => {
+    spawnCodexMock.mockImplementation(async ({ args }) => {
+      const outputIndex = args.indexOf("-o");
+      if (outputIndex > -1) {
+        await writeFile(args[outputIndex + 1]!, "Result\n", "utf8");
+      }
+      return {
+        stdout: JSON.stringify({ type: "thread.started", thread_id: "thread_err" }),
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+      };
+    });
+
+    vi.spyOn(sessionStore, "set").mockImplementation(() => {
+      throw new Error("Storage full");
+    });
+
+    const result = await executeCodex({
+      prompt: "Test session error",
+      model: "o3",
+    });
+
+    // Should succeed without sessionId since storage failed
+    expect(result.response).toBe("Result");
+    expect(result.sessionId).toBeUndefined();
+
+    vi.restoreAllMocks();
+  });
+
+  it("returns timeout response when subprocess times out", async () => {
+    spawnCodexMock.mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      timedOut: true,
+    });
+
+    const result = await executeCodex({
+      prompt: "Slow query",
+      model: "o3",
+      timeout: 5000,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.response).toContain("timed out");
+  });
+
   it("resetSession clears the session before executing", async () => {
     // Pre-populate a session
     sessionStore.set("my-session", {

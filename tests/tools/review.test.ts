@@ -317,6 +317,94 @@ describe("executeReview", () => {
     expect(call.stdin).toContain("Read the FULL contents");
   });
 
+  it("returns early when agentic review has no uncommitted changes", async () => {
+    getUncommittedDiffMock.mockImplementation(() => {
+      throw new Error("No uncommitted changes found");
+    });
+
+    const result = await executeReview({
+      quick: false,
+      uncommitted: true,
+    });
+
+    expect(spawnCodexMock).not.toHaveBeenCalled();
+    expect(result.mode).toBe("agentic");
+    expect(result.response).toBe("No uncommitted changes found");
+  });
+
+  it("returns early when agentic branch review has no diff", async () => {
+    getBranchDiffMock.mockImplementation(() => {
+      throw new Error("No diff found between main and HEAD");
+    });
+
+    const result = await executeReview({
+      quick: false,
+      base: "main",
+    });
+
+    expect(spawnCodexMock).not.toHaveBeenCalled();
+    expect(result.mode).toBe("agentic");
+    expect(result.response).toBe("No diff found between main and HEAD");
+    expect(result.diffSource).toBe("branch");
+  });
+
+  it("returns early when quick branch review has no diff", async () => {
+    getBranchDiffMock.mockImplementation(() => {
+      throw new Error("No diff found between main and HEAD");
+    });
+
+    const result = await executeReview({
+      quick: true,
+      base: "main",
+    });
+
+    expect(spawnCodexMock).not.toHaveBeenCalled();
+    expect(result.mode).toBe("quick");
+    expect(result.response).toBe("No diff found between main and HEAD");
+    expect(result.diffSource).toBe("branch");
+  });
+
+  it("uses base branch when both uncommitted and base are provided", async () => {
+    getBranchDiffMock.mockReturnValue("diff --git a/z b/z");
+    spawnCodexMock.mockResolvedValue({
+      stdout: "branch review",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    const result = await executeReview({
+      quick: true,
+      uncommitted: true,
+      base: "develop",
+      model: "o3",
+    });
+
+    // base takes precedence over uncommitted
+    expect(getBranchDiffMock).toHaveBeenCalled();
+    expect(getUncommittedDiffMock).not.toHaveBeenCalled();
+    expect(result.diffSource).toBe("branch");
+    expect(result.base).toBe("develop");
+  });
+
+  it("rejects base ref starting with dash", async () => {
+    await expect(
+      executeReview({ quick: true, base: "--option", model: "o3" }),
+    ).rejects.toThrow("must not start with -");
+  });
+
+  it("rejects base ref with invalid characters", async () => {
+    await expect(
+      executeReview({ quick: true, base: "main;rm -rf", model: "o3" }),
+    ).rejects.toThrow("must be a valid git ref");
+  });
+
+  it("throws when neither uncommitted nor base is specified", async () => {
+    await expect(
+      executeReview({ quick: false, uncommitted: false }),
+    ).rejects.toThrow("Either 'uncommitted' must be true or 'base' must be specified");
+  });
+
   it("uses read-only sandbox for quick branch review", async () => {
     getBranchDiffMock.mockReturnValue("diff --git a/y b/y");
     spawnCodexMock.mockResolvedValue({
