@@ -92,7 +92,7 @@ describe("tool descriptions", () => {
     });
 
     it("includes timeout guidance", () => {
-      expect(desc).toContain("5 minutes");
+      expect(desc).toContain("auto-scales");
       expect(desc).toContain("2 minutes");
     });
 

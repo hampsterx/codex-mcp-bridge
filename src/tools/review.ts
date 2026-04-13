@@ -2,7 +2,7 @@ import { spawnCodex } from "../utils/spawn.js";
 import { parseCodexOutput } from "../utils/parse.js";
 import { checkErrorPatterns } from "../utils/errors.js";
 import { loadPrompt, buildLengthLimit } from "../utils/prompts.js";
-import { getGitRoot, getUncommittedDiff, getBranchDiff } from "../utils/git.js";
+import { getGitRoot, getUncommittedDiff, getBranchDiff, getDiffStat, type DiffStat, type DiffSpec } from "../utils/git.js";
 import { verifyDirectory } from "../utils/security.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
@@ -39,13 +39,60 @@ export interface ReviewResult {
   model?: string;
   fallbackUsed?: boolean;
   timedOut: boolean;
+  /** Diff size stats (files/insertions/deletions) when available. */
+  diffStat?: DiffStat;
+  /** Timeout actually applied to the spawn (ms), including any dynamic scaling. */
+  appliedTimeout: number;
+  /** True when appliedTimeout came from diff-size auto-scaling (agentic only, no caller override). */
+  timeoutScaled: boolean;
 }
 
-/** Default timeout for agentic review (Codex explores repo in --full-auto). */
+/**
+ * Fallback default timeout for agentic review when the diff stat can't be
+ * computed. Normal path auto-scales via scaleAgenticTimeout().
+ */
 const AGENTIC_TIMEOUT = 300_000;
 
 /** Default timeout for quick review (diff-only, single pass). */
 const QUICK_TIMEOUT = 120_000;
+
+/** Baseline budget covering CLI cold start + one small-diff review. */
+const AGENTIC_BASE_MS = 180_000;
+
+/** Per-file increment covering extra tool calls as the diff grows. */
+const AGENTIC_PER_FILE_MS = 30_000;
+
+/**
+ * Map diff size (file count) to an agentic-review timeout budget.
+ *
+ * Linear scaling: `base + per_file * files`, capped at HARD_TIMEOUT_CAP.
+ * The baseline covers the CLI cold start plus one small-diff review; each
+ * additional file adds budget for the extra tool calls the agent makes
+ * exploring context. Caller-supplied timeout still wins.
+ */
+export function scaleAgenticTimeout(stat: DiffStat): number {
+  return Math.min(AGENTIC_BASE_MS + AGENTIC_PER_FILE_MS * stat.files, HARD_TIMEOUT_CAP);
+}
+
+/**
+ * Replace the standard timeout message with one that includes diff size and
+ * an actionable hint. Post-processes rather than threading stat into parse.ts
+ * so parse.ts stays ignorant of review-specific context.
+ */
+function annotatePartialWithStat(
+  timeoutSeconds: number,
+  diffStat: DiffStat | undefined,
+  mode: "agentic" | "quick",
+): string {
+  const prefix = `Review timed out after ${timeoutSeconds}s.`;
+  const hint = mode === "agentic"
+    ? "Consider quick: true or narrow the base."
+    : "Try reviewing a smaller scope.";
+  if (!diffStat) {
+    return `${prefix} ${hint}`;
+  }
+  return `${prefix} Diff: ${diffStat.files} files (+${diffStat.insertions} / -${diffStat.deletions}). ${hint}`;
+}
 
 /**
  * Agentic review prompt. Codex CLI runs in --full-auto with shell access.
@@ -93,13 +140,33 @@ export function buildQuickPrompt(diff: string, focus?: string, maxResponseLength
 export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
   const { uncommitted = true, base, focus, quick = false, maxResponseLength } = input;
   const model = resolveModel(input.model);
-  const defaultTimeout = quick ? QUICK_TIMEOUT : AGENTIC_TIMEOUT;
-  const timeout = Math.min(input.timeout ?? defaultTimeout, HARD_TIMEOUT_CAP);
 
   const requestedDir = input.workingDirectory
     ? await verifyDirectory(input.workingDirectory)
     : process.cwd();
   const cwd = getGitRoot(requestedDir);
+
+  // Compute the diff stat up-front so both modes can report it and agentic
+  // mode can scale its timeout. Failures are non-fatal (returns undefined).
+  const diffSpec: DiffSpec = base ? { type: "branch", base } : { type: "uncommitted" };
+  const diffStat = getDiffStat(cwd, diffSpec);
+
+  // Timeout selection:
+  //   - caller-supplied timeout always wins (capped at HARD_TIMEOUT_CAP)
+  //   - quick mode uses the static QUICK_TIMEOUT
+  //   - agentic mode scales from diff stat, or falls back to AGENTIC_TIMEOUT
+  let appliedTimeout: number;
+  let timeoutScaled = false;
+  if (input.timeout !== undefined) {
+    appliedTimeout = Math.min(input.timeout, HARD_TIMEOUT_CAP);
+  } else if (quick) {
+    appliedTimeout = QUICK_TIMEOUT;
+  } else if (diffStat) {
+    appliedTimeout = scaleAgenticTimeout(diffStat);
+    timeoutScaled = true;
+  } else {
+    appliedTimeout = AGENTIC_TIMEOUT;
+  }
 
   // Resolve the effective CODEX_MCP_SERVERS value for this review:
   //   1. Explicit input.mcpServers wins (tool caller knows what they want).
@@ -107,7 +174,7 @@ export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
   //   3. Otherwise: agentic defaults to "serena" (symbol nav during review);
   //      quick stays disable-all (empty string).
   // When the value came from the implicit tool default (case 3), warnings for
-  // unknown/required servers are suppressed — the user never asked for
+  // unknown/required servers are suppressed -- the user never asked for
   // anything, so yelling at them about the bridge's internal preferences is
   // noise.
   const envVal = process.env["CODEX_MCP_SERVERS"];
@@ -117,11 +184,13 @@ export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
     (envVal !== undefined ? envVal : quick ? "" : "serena");
   const silentMcp = !callerExplicit;
 
+  const shared = { cwd, uncommitted, base, focus, model, timeout: appliedTimeout, maxResponseLength, mcpServers, silentMcp, diffStat, timeoutScaled };
+
   if (quick) {
-    return executeQuickReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp });
+    return executeQuickReview(shared);
   }
 
-  return executeAgenticReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp });
+  return executeAgenticReview(shared);
 }
 
 /**
@@ -156,6 +225,8 @@ interface InternalReviewInput {
   maxResponseLength?: number;
   mcpServers: string;
   silentMcp: boolean;
+  diffStat?: DiffStat;
+  timeoutScaled: boolean;
 }
 
 /**
@@ -163,7 +234,8 @@ interface InternalReviewInput {
  * It has full autonomy to read files, run git commands, follow imports.
  */
 async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewResult> {
-  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp } = input;
+  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp, diffStat, timeoutScaled } = input;
+  const meta = { appliedTimeout: timeout, timeoutScaled, diffStat };
 
   let diffSpec: string;
   let diffSource: ReviewResult["diffSource"];
@@ -191,6 +263,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
         base,
         mode: "agentic",
         timedOut: false,
+        ...meta,
       };
     }
   } catch (e) {
@@ -201,6 +274,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
         base,
         mode: "agentic",
         timedOut: false,
+        ...meta,
       };
     }
     throw e;
@@ -225,13 +299,14 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
 
   if (result.timedOut) {
     return {
-      response: `Review timed out after ${timeout / 1000}s. Try with quick: true for a faster, diff-only review.`,
+      response: annotatePartialWithStat(timeout / 1000, diffStat, "agentic"),
       diffSource,
       base,
       mode: "agentic",
       model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
       timedOut: true,
+      ...meta,
     };
   }
 
@@ -247,6 +322,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     model: actualModel,
     fallbackUsed: fallbackUsed || undefined,
     timedOut: false,
+    ...meta,
   };
 }
 
@@ -254,7 +330,8 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
  * Quick review: pre-computed diff, single-pass, no repo exploration.
  */
 async function executeQuickReview(input: InternalReviewInput): Promise<ReviewResult> {
-  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp } = input;
+  const { cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp, diffStat, timeoutScaled } = input;
+  const meta = { appliedTimeout: timeout, timeoutScaled, diffStat };
 
   let diff: string;
   let diffSource: ReviewResult["diffSource"];
@@ -278,6 +355,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
         base,
         mode: "quick",
         timedOut: false,
+        ...meta,
       };
     }
     throw e;
@@ -300,13 +378,14 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
 
   if (result.timedOut) {
     return {
-      response: `Review timed out after ${timeout / 1000}s. The diff may be too large. Try reviewing a smaller scope.`,
+      response: annotatePartialWithStat(timeout / 1000, diffStat, "quick"),
       diffSource,
       base,
       mode: "quick",
       model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
       timedOut: true,
+      ...meta,
     };
   }
 
@@ -322,5 +401,6 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
     model: actualModel,
     fallbackUsed: fallbackUsed || undefined,
     timedOut: false,
+    ...meta,
   };
 }
