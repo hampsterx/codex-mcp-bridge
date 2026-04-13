@@ -1,8 +1,8 @@
 {
   "name": "codex-mcp-bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that wraps Codex CLI for code execution, review, search, and structured output",
-  "author": "Tim Birrell",
+  "author": "hampsterx",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-13
+
+### Added
+
+- **Expanded reasoningEffort enum**: 6 levels (`lowest`, `low`, `medium`, `high`,
+  `highest`, `max`) replacing the previous 3-level enum
+- **Supported models in ping**: `ping` response now includes the list of models
+  available in the Codex CLI
+- **Review timeout auto-scaling**: agentic review timeout scales from diff size
+  (line count and file count) instead of using a fixed ceiling
+
+### Fixed
+
+- **releaseSlot underflow guard**: `activeCount` can no longer go negative if
+  `releaseSlot` is called more times than `acquireSlot`
+
+### Changed
+
+- Test coverage expanded: missing test suites added, coverage gaps filled
+  (378 tests across 24 suites)
+
 ## [0.3.0] - 2026-04-13
 
 ### Added
