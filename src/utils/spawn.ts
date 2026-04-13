@@ -99,6 +99,7 @@ export function acquireSlot(queueTimeoutMs: number = QUEUE_TIMEOUT): Promise<voi
  * Exported for diagnostics and tests.
  */
 export function releaseSlot(): void {
+  if (activeCount <= 0) return;
   activeCount--;
   const next = waitQueue.shift();
   if (next) {

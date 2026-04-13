@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   acquireSlot,
   releaseSlot,
@@ -6,6 +6,7 @@ import {
   getActiveCount,
   getQueueDepth,
   getMaxConcurrent,
+  findCodexBinary,
 } from "../../src/utils/spawn.js";
 
 describe("concurrency queue", () => {
@@ -130,5 +131,58 @@ describe("concurrency queue", () => {
     expect(secondGranted).toBe(true);
     expect(getActiveCount()).toBe(2);
     expect(getQueueDepth()).toBe(0);
+  });
+
+  it("spurious releaseSlot cannot inflate pool beyond maxConcurrent", async () => {
+    const n = 3;
+    resetConcurrency(n);
+
+    // Spurious release with nothing active — must clamp, not underflow to -1.
+    releaseSlot();
+    expect(getActiveCount()).toBe(0);
+
+    // Fill the pool to capacity.
+    for (let i = 0; i < n; i++) {
+      await acquireSlot();
+    }
+    expect(getActiveCount()).toBe(n);
+
+    // The (n+1)th acquire must queue, not resolve immediately.
+    let extraGranted = false;
+    const extra = acquireSlot(5_000).then(() => {
+      extraGranted = true;
+    });
+
+    await Promise.resolve();
+    expect(extraGranted).toBe(false);
+    expect(getActiveCount()).toBeLessThanOrEqual(n);
+    expect(getQueueDepth()).toBe(1);
+
+    // Only succeeds after a real release frees a slot.
+    releaseSlot();
+    await extra;
+
+    expect(extraGranted).toBe(true);
+    expect(getActiveCount()).toBe(n);
+    expect(getQueueDepth()).toBe(0);
+  });
+});
+
+describe("findCodexBinary", () => {
+  const origCliPath = process.env["CODEX_CLI_PATH"];
+
+  afterEach(() => {
+    if (origCliPath === undefined) delete process.env["CODEX_CLI_PATH"];
+    else process.env["CODEX_CLI_PATH"] = origCliPath;
+  });
+
+  it("returns 'codex' by default", () => {
+    delete process.env["CODEX_CLI_PATH"];
+    expect(findCodexBinary()).toBe("codex");
+  });
+
+  it("returns CODEX_CLI_PATH when set", () => {
+    process.env["CODEX_CLI_PATH"] = "/usr/local/bin/my-codex";
+    expect(findCodexBinary()).toBe("/usr/local/bin/my-codex");
   });
 });
