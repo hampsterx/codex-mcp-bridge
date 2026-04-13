@@ -133,21 +133,38 @@ describe("concurrency queue", () => {
     expect(getQueueDepth()).toBe(0);
   });
 
-  it("releaseSlot without prior acquire does not block future acquires", () => {
-    resetConcurrency(2);
+  it("spurious releaseSlot cannot inflate pool beyond maxConcurrent", async () => {
+    const n = 3;
+    resetConcurrency(n);
+
+    // Spurious release with nothing active — must clamp, not underflow to -1.
+    releaseSlot();
     expect(getActiveCount()).toBe(0);
 
-    // Spurious releaseSlot (e.g. double-release bug). The important contract
-    // is that the pool remains usable afterward, not the exact count.
-    releaseSlot();
+    // Fill the pool to capacity.
+    for (let i = 0; i < n; i++) {
+      await acquireSlot();
+    }
+    expect(getActiveCount()).toBe(n);
 
-    // Should still be able to acquire the full pool worth of slots.
-    acquireSlot();
-    acquireSlot();
-    // Depending on underflow: if count went to -1, these two acquires bring
-    // it to 1, so a third would also succeed. If a guard is added later and
-    // count stays at 0, we'd be at 2 (full). Either way the pool is usable.
-    expect(getActiveCount()).toBeGreaterThanOrEqual(0);
+    // The (n+1)th acquire must queue, not resolve immediately.
+    let extraGranted = false;
+    const extra = acquireSlot(5_000).then(() => {
+      extraGranted = true;
+    });
+
+    await Promise.resolve();
+    expect(extraGranted).toBe(false);
+    expect(getActiveCount()).toBeLessThanOrEqual(n);
+    expect(getQueueDepth()).toBe(1);
+
+    // Only succeeds after a real release frees a slot.
+    releaseSlot();
+    await extra;
+
+    expect(extraGranted).toBe(true);
+    expect(getActiveCount()).toBe(n);
+    expect(getQueueDepth()).toBe(0);
   });
 });
 

@@ -179,7 +179,7 @@ describe("executeCodex", () => {
     expect(result.response).toBe("JSONL fallback response");
   });
 
-  it("falls back to JSONL-parsed response when output file does not exist", async () => {
+  it("falls back to JSONL-parsed response when output file is not created by CLI", async () => {
     spawnCodexMock.mockImplementation(async () => ({
       stdout: [
         JSON.stringify({ type: "thread.started", thread_id: "thread_nofile" }),
