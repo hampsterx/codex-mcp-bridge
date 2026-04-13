@@ -13,7 +13,7 @@ export interface QueryInput {
   prompt: string;
   context?: string;
   model?: string;
-  reasoningEffort?: "low" | "medium" | "high";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   timeout?: number;
   maxResponseLength?: number;
 }

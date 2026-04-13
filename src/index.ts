@@ -52,7 +52,7 @@ Tips:
 - Break complex tasks into focused prompts rather than one large request.
 - Resume multi-turn conversations with sessionId (returned in previous response metadata).
 - Include relevant files via the files parameter for targeted context (text and images supported).
-- Set reasoningEffort to "low" for simple tasks, "high" for complex analysis.`,
+- Set reasoningEffort to control depth: "none" for trivial, "minimal" for lightweight, "low"/"medium" for routine, "high"/"xhigh" for deep analysis.`,
     inputSchema: {
       prompt: z.string().describe("The prompt to send to Codex"),
       files: z
@@ -73,7 +73,7 @@ Tips:
         .optional()
         .describe("Clear this session's conversation history and start fresh (requires sessionId)"),
       reasoningEffort: z
-        .enum(["low", "medium", "high"])
+        .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
         .optional()
         .describe("Reasoning effort level (maps to -c model_reasoning_effort)"),
       workingDirectory: z
@@ -351,7 +351,7 @@ Use cases: reviewing a plan, critiquing a draft, comparing approaches, answering
 
 Tips:
 - Pass the text to analyze in the context parameter, not as file paths.
-- Set reasoningEffort to "low" for simple opinions, "high" for thorough analysis.
+- Set reasoningEffort to control depth: "none" for trivial, "minimal" for lightweight, "low"/"medium" for routine, "high"/"xhigh" for thorough analysis.
 - Use maxResponseLength to control verbosity.`,
     inputSchema: {
       prompt: z.string().describe("The question or instruction"),
@@ -361,7 +361,7 @@ Tips:
         .describe("Text to analyze (inline, not file paths)"),
       model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
       reasoningEffort: z
-        .enum(["low", "medium", "high"])
+        .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
         .optional()
         .describe("Reasoning effort level (maps to -c model_reasoning_effort)"),
       timeout: z
