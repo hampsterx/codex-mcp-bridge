@@ -1,3 +1,36 @@
+/** Model capability tier. */
+export type ModelTier = "fast" | "standard" | "powerful";
+
+/** Static metadata about a supported model. */
+export interface ModelInfo {
+  id: string;
+  tier: ModelTier;
+  description: string;
+  isDefault: boolean;
+}
+
+/**
+ * Static list of models known to work with Codex CLI.
+ * Updated at release time. Order: fast -> standard -> powerful.
+ */
+const SUPPORTED_MODELS: Omit<ModelInfo, "isDefault">[] = [
+  { id: "gpt-4.1",  tier: "fast",     description: "Previous gen, lower cost, good speed" },
+  { id: "o3",       tier: "standard",  description: "Reasoning model, default fallback when quota exhausted" },
+  { id: "gpt-5.4",  tier: "powerful",  description: "Latest flagship model, highest capability" },
+];
+
+/**
+ * Return supported models with `isDefault` resolved at call time
+ * against the configured default model.
+ */
+export function getSupportedModels(): ModelInfo[] {
+  const defaultModel = getDefaultModel();
+  return SUPPORTED_MODELS.map((m) => ({
+    ...m,
+    isDefault: m.id === defaultModel,
+  }));
+}
+
 /**
  * Return the configured default model from CODEX_DEFAULT_MODEL.
  * Treats empty/whitespace-only strings as unset.
