@@ -85,29 +85,35 @@ export function getMcpServerOverride(
   const raw = override !== undefined ? override : envValue;
   const val = raw?.trim() ?? "";
 
-  // Branch 1: unset / empty / whitespace → disable all non-required.
-  if (val === "") {
-    const configured = listMcpServers(readCodexConfig());
-    // Explicit "" → treat as a disable-all request and warn on required drops.
-    // Truly unset, or silent tool-default path → stay silent.
-    if (explicit && !silent) {
-      return buildMcpArgs(configured, new Set<string>());
-    }
-    return buildMcpArgs(configured);
-  }
+  if (val === "") return disableNonRequiredServers(explicit, silent);
+  if (val === "inherit") return [];
+  if (val[0] === "{" || val[0] === "[") return rawTomlOverride(val);
+  return enableListedServers(val, silent);
+}
 
-  // Branch 2: inherit → passthrough.
-  if (val === "inherit") {
-    return [];
+/**
+ * Disable all non-required MCP servers.
+ * When `explicit` is true and `silent` is false, warnings are emitted
+ * for required servers that cannot be disabled.
+ */
+function disableNonRequiredServers(explicit: boolean, silent: boolean): string[] {
+  const configured = listMcpServers(readCodexConfig());
+  if (explicit && !silent) {
+    return buildMcpArgs(configured, new Set<string>());
   }
+  return buildMcpArgs(configured);
+}
 
-  // Branch 3: raw TOML escape hatch (first non-ws char is { or [).
-  const first = val[0];
-  if (first === "{" || first === "[") {
-    return ["-c", `mcp_servers=${val}`];
-  }
+/** Pass raw TOML through as a `-c` flag. */
+function rawTomlOverride(val: string): string[] {
+  return ["-c", `mcp_servers=${val}`];
+}
 
-  // Branch 4: comma-separated enable list.
+/**
+ * Parse a comma-separated list of server names to enable.
+ * Unknown names are warned (unless silent) and dropped.
+ */
+function enableListedServers(val: string, silent: boolean): string[] {
   const requested = val
     .split(",")
     .map((s) => s.trim())

@@ -166,13 +166,15 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
       };
     }
 
-    checkErrorPatterns(result.exitCode, result.stderr);
+    checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
     const parsed = parseCodexOutput(result.stdout, result.stderr);
     const fileResponse = await readOutputFile(outputFile);
 
-    // Store session for resume if we got a thread ID
-    let outputSessionId = input.sessionId;
+    // Store session for resume if we got a valid thread ID from CLI output.
+    // Only return sessionId when we can confirm a backing conversation exists,
+    // to avoid returning a stale ID after reset or when CLI output lacks a thread.
+    let outputSessionId: string | undefined;
     if (parsed.threadId && isValidSessionId(parsed.threadId)) {
       const sessionId = input.sessionId ?? `codex-${Date.now()}`;
       try {
@@ -188,14 +190,21 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
       } catch {
         // Session storage is best-effort; continue without it
       }
+    } else if (!parsed.threadId && conversationId && input.sessionId) {
+      // Successfully resumed an existing session (thread ID not repeated in output).
+      // Only falls through here when threadId is absent, not when it's invalid.
+      outputSessionId = input.sessionId;
     }
+
+    const validatedThreadId =
+      parsed.threadId && isValidSessionId(parsed.threadId) ? parsed.threadId : undefined;
 
     return {
       response: fileResponse ?? parsed.response,
       model: actualModel,
       fallbackUsed: fallbackUsed || undefined,
       sessionId: outputSessionId,
-      conversationId: parsed.threadId,
+      conversationId: validatedThreadId,
       filesIncluded: includedFiles,
       filesSkipped: skippedFiles,
       imagesIncluded: imageNames,

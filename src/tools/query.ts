@@ -78,7 +78,7 @@ export async function executeQuery(input: QueryInput): Promise<QueryResult> {
       };
     }
 
-    checkErrorPatterns(result.exitCode, result.stderr);
+    checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
     const parsed = parseCodexOutput(result.stdout, result.stderr);
 

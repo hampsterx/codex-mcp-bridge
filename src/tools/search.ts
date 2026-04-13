@@ -66,7 +66,7 @@ export async function executeSearch(input: SearchInput): Promise<SearchResult> {
     };
   }
 
-  checkErrorPatterns(result.exitCode, result.stderr);
+  checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
   const parsed = parseCodexOutput(result.stdout, result.stderr);
 

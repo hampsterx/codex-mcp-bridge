@@ -77,7 +77,20 @@ export async function executePing(): Promise<PingResult> {
         queueDepth,
       };
     }
-    cliFound = true;
+    // Binary exists but failed (EACCES, timeout, crash).
+    // Return early so auth detection doesn't run against a broken CLI.
+    return {
+      cliFound: true,
+      version: null,
+      authStatus: "unknown",
+      defaultModel: getDefaultModel() ?? null,
+      fallbackModel: getFallbackModel() ?? null,
+      serverVersion: PKG_VERSION,
+      nodeVersion: process.version,
+      maxConcurrent,
+      activeCount,
+      queueDepth,
+    };
   }
 
   const authStatus = detectAuthStatus();

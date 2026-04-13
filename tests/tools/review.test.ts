@@ -20,6 +20,7 @@ const {
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
+  HARD_TIMEOUT_CAP: 600_000,
 }));
 
 vi.mock("../../src/utils/security.js", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRetryableError, checkErrorPatterns } from "../../src/utils/errors.js";
+import { isRetryableError, checkErrorPatterns, toErrorMessage } from "../../src/utils/errors.js";
 
 describe("isRetryableError", () => {
   it("returns false for exit code 0", () => {
@@ -53,7 +53,46 @@ describe("checkErrorPatterns", () => {
     );
   });
 
-  it("does not throw for unrecognized errors", () => {
-    expect(() => checkErrorPatterns(1, "some other error")).not.toThrow();
+  it("throws for generic non-zero exit when no stdout", () => {
+    expect(() => checkErrorPatterns(1, "some other error")).toThrow(
+      /exited with code 1/,
+    );
+  });
+
+  it("does not throw for non-zero exit when stdout has content", () => {
+    expect(() => checkErrorPatterns(1, "warning: something", "response text")).not.toThrow();
+  });
+
+  it("does not throw for non-zero exit with empty stderr", () => {
+    expect(() => checkErrorPatterns(1, "")).not.toThrow();
+  });
+});
+
+describe("toErrorMessage", () => {
+  it("extracts message from Error instances", () => {
+    expect(toErrorMessage(new Error("test error"))).toBe("test error");
+  });
+
+  it("includes cause message for chained errors", () => {
+    const cause = new Error("underlying failure");
+    const outer = new Error("operation failed", { cause });
+    expect(toErrorMessage(outer)).toBe("operation failed: underlying failure");
+  });
+
+  it("converts strings to string", () => {
+    expect(toErrorMessage("raw string")).toBe("raw string");
+  });
+
+  it("extracts message from objects with message property", () => {
+    expect(toErrorMessage({ message: "plain object error" })).toBe("plain object error");
+  });
+
+  it("converts objects without message to string", () => {
+    expect(toErrorMessage({ code: 42 })).toBe("[object Object]");
+  });
+
+  it("handles null and undefined", () => {
+    expect(toErrorMessage(null)).toBe("null");
+    expect(toErrorMessage(undefined)).toBe("undefined");
   });
 });

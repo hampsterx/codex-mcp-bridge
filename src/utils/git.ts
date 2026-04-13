@@ -10,8 +10,8 @@ export function getGitRoot(cwd: string): string {
       encoding: "utf8",
       timeout: 5000,
     }).trim();
-  } catch {
-    throw new Error(`Not a git repository: ${cwd}`);
+  } catch (e) {
+    throw new Error(`Not a git repository: ${cwd}`, { cause: e });
   }
 }
 
@@ -43,7 +43,7 @@ export function getUncommittedDiff(cwd: string, contextLines = 5): string {
     if (e instanceof Error && e.message === "No uncommitted changes found") {
       throw e;
     }
-    throw new Error(`Failed to get git diff: ${e}`);
+    throw new Error("Failed to get git diff", { cause: e });
   }
 }
 
@@ -66,6 +66,6 @@ export function getBranchDiff(cwd: string, base: string, contextLines = 5): stri
     if (e instanceof Error && e.message.startsWith("No diff found")) {
       throw e;
     }
-    throw new Error(`Failed to get branch diff against "${base}": ${e}`);
+    throw new Error(`Failed to get branch diff against "${base}"`, { cause: e });
   }
 }

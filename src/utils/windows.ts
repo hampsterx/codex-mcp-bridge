@@ -1,6 +1,20 @@
 /**
- * Windows-specific argument escaping for cmd.exe.
- * From Phase 1 of the plan: handle Windows from day 1.
+ * Windows-specific argument escaping.
+ *
+ * NOTE: The bridge spawns Codex CLI with `shell: false`, which means
+ * arguments are passed directly to the process via CreateProcessW on
+ * Windows (no cmd.exe interpretation). The cmd.exe escaping below
+ * (%→%%, "→"") is therefore unnecessary for the bridge's own spawns.
+ *
+ * However, the escaped values end up inside `-c key="value"` Codex CLI
+ * config flags, where the CLI itself may re-parse them. Removing the
+ * escaping requires verifying Codex CLI's config flag parsing on
+ * Windows, which is untested. Keeping the escaping as a defensive
+ * measure until Windows CI coverage is added.
+ *
+ * Missing coverage: cmd.exe metacharacters (^, &, |, <, >, !) are not
+ * escaped. Again, irrelevant with shell: false, but worth noting if
+ * the spawn strategy ever changes.
  */
 
 /**

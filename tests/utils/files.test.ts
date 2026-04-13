@@ -148,7 +148,7 @@ describe("readFiles", () => {
     const results = await readFiles(["lines.txt:20-30"], tempDir);
     expect(results).toHaveLength(1);
     expect(results[0].content).toBe("");
-    expect(results[0].label).toContain("0 of 10 lines");
+    expect(results[0].label).toContain("requested range past 10-line file");
   });
 
   it("counts lines correctly for files with trailing newline", async () => {

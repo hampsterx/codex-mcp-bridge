@@ -1,12 +1,12 @@
-import type { SpawnResult } from "./spawn.js";
+import { type SpawnResult, HARD_TIMEOUT_CAP } from "./spawn.js";
 import { isRetryableError } from "./errors.js";
 import { getFallbackModel } from "./model.js";
 
 /** Minimum remaining time to attempt a fallback retry. */
 const MIN_RETRY_BUDGET = 10_000;
 
-/** Hard cap matching spawn.ts — total wall-clock for both attempts combined. */
-export const HARD_TIMEOUT_CAP = 600_000;
+// Re-export so existing consumers (tool handlers) don't need to change imports.
+export { HARD_TIMEOUT_CAP };
 
 export interface FallbackResult {
   result: SpawnResult;
