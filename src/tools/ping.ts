@@ -7,7 +7,7 @@ import {
   getQueueDepth,
 } from "../utils/spawn.js";
 import { buildSubprocessEnv } from "../utils/env.js";
-import { getDefaultModel, getFallbackModel } from "../utils/model.js";
+import { getDefaultModel, getFallbackModel, getSupportedModels, type ModelInfo } from "../utils/model.js";
 
 const require = createRequire(import.meta.url);
 const PKG_VERSION: string = (require("../../package.json") as { version: string }).version;
@@ -18,6 +18,7 @@ export interface PingResult {
   authStatus: "ok" | "missing" | "unknown";
   defaultModel: string | null;
   fallbackModel: string | null;
+  supportedModels: ModelInfo[];
   serverVersion: string;
   nodeVersion: string;
   maxConcurrent: number;
@@ -47,66 +48,39 @@ function detectAuthStatus(): PingResult["authStatus"] {
  */
 export async function executePing(): Promise<PingResult> {
   const binary = findCodexBinary();
-  const maxConcurrent = getMaxConcurrent();
-  const activeCount = getActiveCount();
-  const queueDepth = getQueueDepth();
 
-  let cliFound = false;
-  let version: string | null = null;
+  // Build the base result once; error paths spread-override specific fields.
+  const base: PingResult = {
+    cliFound: false,
+    version: null,
+    authStatus: "unknown",
+    defaultModel: getDefaultModel() ?? null,
+    fallbackModel: getFallbackModel() ?? null,
+    supportedModels: getSupportedModels(),
+    serverVersion: PKG_VERSION,
+    nodeVersion: process.version,
+    maxConcurrent: getMaxConcurrent(),
+    activeCount: getActiveCount(),
+    queueDepth: getQueueDepth(),
+  };
 
   try {
     const output = execFileSync(binary, ["--version"], {
       encoding: "utf8",
       timeout: 10_000,
     }).trim();
-    cliFound = true;
-    version = output;
+    base.cliFound = true;
+    base.version = output;
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "ENOENT") {
-      return {
-        cliFound: false,
-        version: null,
-        authStatus: "missing",
-        defaultModel: getDefaultModel() ?? null,
-        fallbackModel: getFallbackModel() ?? null,
-        serverVersion: PKG_VERSION,
-        nodeVersion: process.version,
-        maxConcurrent,
-        activeCount,
-        queueDepth,
-      };
+      return { ...base, authStatus: "missing" };
     }
     // Binary exists but failed (EACCES, timeout, crash).
     // Return early so auth detection doesn't run against a broken CLI.
-    return {
-      cliFound: true,
-      version: null,
-      authStatus: "unknown",
-      defaultModel: getDefaultModel() ?? null,
-      fallbackModel: getFallbackModel() ?? null,
-      serverVersion: PKG_VERSION,
-      nodeVersion: process.version,
-      maxConcurrent,
-      activeCount,
-      queueDepth,
-    };
+    return { ...base, cliFound: true };
   }
 
-  const authStatus = detectAuthStatus();
-  const defaultModel = getDefaultModel() ?? null;
-  const fallbackModel = getFallbackModel() ?? null;
-
-  return {
-    cliFound,
-    version,
-    authStatus,
-    defaultModel,
-    fallbackModel,
-    serverVersion: PKG_VERSION,
-    nodeVersion: process.version,
-    maxConcurrent,
-    activeCount,
-    queueDepth,
-  };
+  base.authStatus = detectAuthStatus();
+  return base;
 }

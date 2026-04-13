@@ -550,12 +550,17 @@ server.registerTool(
       const result = await executePing();
       const durationMs = Date.now() - startTime;
 
+      const modelsSummary = result.supportedModels
+        .map((m) => `${m.id} (${m.tier}${m.isDefault ? ", default" : ""})`)
+        .join(", ");
+
       const lines = [
         `CLI found: ${result.cliFound ? "yes" : "NO — install with: npm i -g @openai/codex"}`,
         `CLI version: ${result.version ?? "unknown"}`,
         `Auth status: ${result.authStatus}`,
         `Default model: ${result.defaultModel ?? "(CLI default)"}`,
         `Fallback model: ${result.fallbackModel ?? "disabled"}`,
+        `Supported models: ${modelsSummary}`,
         `Server version: ${result.serverVersion}`,
         `Node version: ${result.nodeVersion}`,
         `Max concurrent: ${result.maxConcurrent}`,

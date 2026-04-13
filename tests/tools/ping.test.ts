@@ -57,3 +57,21 @@ describe("executePing concurrency diagnostics", () => {
     expect(result.maxConcurrent).toBe(getMaxConcurrent());
   });
 });
+
+describe("executePing supportedModels", () => {
+  it("includes supportedModels array in result", async () => {
+    const result = await executePing();
+    expect(Array.isArray(result.supportedModels)).toBe(true);
+    expect(result.supportedModels.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("each model has id, tier, description, and isDefault", async () => {
+    const result = await executePing();
+    for (const m of result.supportedModels) {
+      expect(typeof m.id).toBe("string");
+      expect(["fast", "standard", "powerful"]).toContain(m.tier);
+      expect(typeof m.description).toBe("string");
+      expect(typeof m.isDefault).toBe("boolean");
+    }
+  });
+});
