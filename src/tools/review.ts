@@ -124,6 +124,28 @@ export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
   return executeAgenticReview({ cwd, uncommitted, base, focus, model, timeout, maxResponseLength, mcpServers, silentMcp });
 }
 
+/**
+ * Validate a git base ref to prevent shell injection or path traversal.
+ * Allows common revspec characters: alphanumeric, `-`, `_`, `/`, `.`, `~`, `^`.
+ * These cover branch paths (origin/main) and ancestry (HEAD~1, main^).
+ * Excludes `:` because tree-ish refs (v1.0:path) don't work with
+ * the `base...HEAD` symmetric difference syntax used by the review tool.
+ * Subprocess spawning with shell: false prevents actual injection,
+ * so this is defense-in-depth.
+ */
+function validateBaseRef(base: string): void {
+  if (base.startsWith("-")) {
+    throw new Error(
+      `Invalid base ref: "${base}" — must not start with - (interpreted as git option)`,
+    );
+  }
+  if (!/^[\w./~^-]+$/.test(base)) {
+    throw new Error(
+      `Invalid base ref: "${base}" — must be a valid git ref (alphanumeric, -, _, /, ., ~, ^)`,
+    );
+  }
+}
+
 interface InternalReviewInput {
   cwd: string;
   uncommitted: boolean;
@@ -147,9 +169,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
   let diffSource: ReviewResult["diffSource"];
 
   if (base) {
-    if (!/^[\w./-]+$/.test(base)) {
-      throw new Error(`Invalid base ref: "${base}" — must be a valid git ref (alphanumeric, -, _, /, .)`);
-    }
+    validateBaseRef(base);
     diffSpec = `git diff ${base}...HEAD -U5`;
     diffSource = "branch";
   } else if (uncommitted) {
@@ -215,7 +235,7 @@ async function executeAgenticReview(input: InternalReviewInput): Promise<ReviewR
     };
   }
 
-  checkErrorPatterns(result.exitCode, result.stderr);
+  checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
   const parsed = parseCodexOutput(result.stdout, result.stderr);
 
@@ -241,6 +261,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
 
   try {
     if (base) {
+      validateBaseRef(base);
       diff = getBranchDiff(cwd, base);
       diffSource = "branch";
     } else if (uncommitted) {
@@ -289,7 +310,7 @@ async function executeQuickReview(input: InternalReviewInput): Promise<ReviewRes
     };
   }
 
-  checkErrorPatterns(result.exitCode, result.stderr);
+  checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
   const parsed = parseCodexOutput(result.stdout, result.stderr);
 

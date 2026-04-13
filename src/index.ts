@@ -21,6 +21,7 @@ import {
 } from "./annotations.js";
 import { sessionStore } from "./utils/session.js";
 import { buildMeta } from "./utils/meta.js";
+import { toErrorMessage } from "./utils/errors.js";
 import { maybeStartHeartbeat, type ProgressNotificationSender } from "./utils/progress.js";
 
 const require = createRequire(import.meta.url);
@@ -147,7 +148,7 @@ Tips:
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
@@ -249,7 +250,7 @@ Tips:
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
@@ -328,7 +329,7 @@ Tips:
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
@@ -412,7 +413,7 @@ Tips:
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
@@ -492,7 +493,7 @@ server.registerTool(
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };
@@ -569,7 +570,7 @@ server.registerTool(
     } catch (e) {
       const durationMs = Date.now() - startTime;
       return {
-        content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
         isError: true,
         _meta: buildMeta({ durationMs }),
       };

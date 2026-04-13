@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { buildSubprocessEnv } from "./env.js";
 
 /** Hard maximum timeout — no request can exceed this. */
-const HARD_TIMEOUT_CAP = 600_000; // 10 minutes
+export const HARD_TIMEOUT_CAP = 600_000; // 10 minutes
 
 /** Default max concurrent subprocess spawns. */
 const DEFAULT_MAX_CONCURRENT = 3;

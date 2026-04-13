@@ -48,13 +48,21 @@ export class InMemorySessionStorage implements SessionStorage {
     this.maxSessions = maxSessions;
   }
 
+  /**
+   * Retrieve a session by ID.
+   *
+   * Side effect: updates `lastUsedAt` on the stored entry, which affects
+   * LRU eviction ordering. Returns a shallow copy so callers cannot
+   * mutate the stored entry directly.
+   */
   get(sessionId: string): SessionEntry | undefined {
     this.evictExpired();
     const entry = this.store.get(sessionId);
     if (entry) {
       entry.lastUsedAt = Date.now();
+      return { ...entry };
     }
-    return entry;
+    return undefined;
   }
 
   set(sessionId: string, entry: SessionEntry): void {
@@ -71,7 +79,7 @@ export class InMemorySessionStorage implements SessionStorage {
       }
       if (oldestKey) this.store.delete(oldestKey);
     }
-    this.store.set(sessionId, entry);
+    this.store.set(sessionId, { ...entry });
   }
 
   delete(sessionId: string): void {
@@ -82,7 +90,7 @@ export class InMemorySessionStorage implements SessionStorage {
     this.evictExpired();
     return Array.from(this.store.entries()).map(([sessionId, entry]) => ({
       sessionId,
-      entry,
+      entry: { ...entry },
     }));
   }
 

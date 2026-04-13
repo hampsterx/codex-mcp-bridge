@@ -9,13 +9,24 @@ const PROMPTS_DIR = resolve(__dirname, "../../prompts");
  * Load a prompt template from prompts/ and replace placeholders.
  * Placeholders use the format {{KEY}}. Only keys present in `vars`
  * are replaced; unknown placeholders pass through unchanged.
+ *
+ * Uses single-pass regex replacement to prevent user-supplied text
+ * (e.g. a DIFF containing `{{LENGTH_LIMIT}}`) from being mutated
+ * by later replacement passes.
  */
 export function loadPrompt(filename: string, vars: Record<string, string>): string {
-  let result = readFileSync(resolve(PROMPTS_DIR, basename(filename)), "utf8");
-  for (const [key, value] of Object.entries(vars)) {
-    result = result.replaceAll(`{{${key}}}`, value);
-  }
-  return result;
+  const template = readFileSync(resolve(PROMPTS_DIR, basename(filename)), "utf8");
+  const keys = Object.keys(vars);
+  if (keys.length === 0) return template;
+
+  const pattern = new RegExp(
+    keys.map((k) => `\\{\\{${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\}\\}`).join("|"),
+    "g",
+  );
+  return template.replace(pattern, (match) => {
+    const key = match.slice(2, -2);
+    return vars[key] ?? match;
+  });
 }
 
 /**

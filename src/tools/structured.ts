@@ -53,8 +53,9 @@ export async function executeStructured(input: StructuredInput): Promise<Structu
   const { prompt, files = [], timeout } = input;
   const model = resolveModel(input.model);
 
-  if (input.schema.length > MAX_SCHEMA_SIZE) {
-    throw new Error(`Schema too large: ${input.schema.length} bytes (max ${MAX_SCHEMA_SIZE})`);
+  const schemaBytes = Buffer.byteLength(input.schema);
+  if (schemaBytes > MAX_SCHEMA_SIZE) {
+    throw new Error(`Schema too large: ${schemaBytes} bytes (max ${MAX_SCHEMA_SIZE})`);
   }
 
   let parsedSchema: object;
@@ -126,7 +127,7 @@ export async function executeStructured(input: StructuredInput): Promise<Structu
     };
   }
 
-  checkErrorPatterns(result.exitCode, result.stderr);
+  checkErrorPatterns(result.exitCode, result.stderr, result.stdout);
 
   const parsed = parseCodexOutput(result.stdout, result.stderr);
 
