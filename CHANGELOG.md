@@ -10,8 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **Expanded reasoningEffort enum**: 6 levels (`lowest`, `low`, `medium`, `high`,
-  `highest`, `max`) replacing the previous 3-level enum
+- **Expanded reasoningEffort enum**: 6 levels (`none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`) replacing the previous 3-level enum
 - **Supported models in ping**: `ping` response now includes the list of models
   available in the Codex CLI
 - **Review timeout auto-scaling**: agentic review timeout scales from diff size
