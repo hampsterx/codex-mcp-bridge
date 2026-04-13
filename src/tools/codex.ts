@@ -25,7 +25,7 @@ export interface CodexInput {
   sandbox?: "read-only" | "workspace-write" | "full-auto";
   sessionId?: string;
   resetSession?: boolean;
-  reasoningEffort?: "low" | "medium" | "high";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   workingDirectory?: string;
   timeout?: number;
   maxResponseLength?: number;
@@ -227,7 +227,7 @@ async function readOutputFile(filePath: string): Promise<string | undefined> {
 interface BuildArgsInput {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "full-auto";
-  reasoningEffort?: "low" | "medium" | "high";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   conversationId?: string;
   prompt?: string;
   outputFile?: string;
