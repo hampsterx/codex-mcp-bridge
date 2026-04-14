@@ -9,6 +9,33 @@ export interface DiffStat {
 export type DiffSpec = { type: "uncommitted" } | { type: "branch"; base: string };
 
 /**
+ * Validate a git base ref to prevent shell injection or path traversal.
+ * Allows common revspec characters: alphanumeric, `-`, `_`, `/`, `.`, `~`, `^`.
+ * These cover branch paths (origin/main) and ancestry syntax (HEAD~1, main^).
+ *
+ * Excludes `:` because tree-ish refs (v1.0:path) don't work with the
+ * `base...HEAD` symmetric-difference syntax used by the review / assess
+ * tools. Subprocess spawning with shell: false prevents actual injection,
+ * so this is defense-in-depth.
+ *
+ * Shared by `review` and `assess` so both accept the same ref grammar.
+ * Previously the two utilities disagreed, causing `assess({ base: "HEAD~1" })`
+ * to fail even though the corresponding `review` call worked.
+ */
+export function validateBaseRef(base: string): void {
+  if (base.startsWith("-")) {
+    throw new Error(
+      `Invalid base ref: "${base}" — must not start with - (interpreted as git option)`,
+    );
+  }
+  if (!/^[\w./~^-]+$/.test(base)) {
+    throw new Error(
+      `Invalid base ref: "${base}" — must be a valid git ref (alphanumeric, -, _, /, ., ~, ^)`,
+    );
+  }
+}
+
+/**
  * Parse `git diff --numstat` output into a DiffStat summary.
  *
  * Binary files (`-\t-\t<path>`) contribute to the file count but not to
@@ -51,6 +78,35 @@ export function getDiffStat(cwd: string, spec: DiffSpec): DiffStat | undefined {
     return stat.files > 0 ? stat : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Get the list of changed file paths for a diff spec.
+ *
+ * Uses `git diff --name-only`, one path per line. Returns an empty array
+ * when there is no diff. Throws on bad refs or git errors so callers can
+ * distinguish "no changes" from "couldn't read diff".
+ */
+export function getDiffFiles(cwd: string, spec: DiffSpec): string[] {
+  const run = (refArgs: string[]): string =>
+    execFileSync("git", ["-C", cwd, "diff", "--name-only", ...refArgs], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+  try {
+    let raw: string;
+    if (spec.type === "branch") {
+      validateBaseRef(spec.base);
+      raw = run([`${spec.base}...HEAD`]);
+    } else {
+      raw = run(["HEAD"]);
+    }
+    return raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Invalid base ref")) throw e;
+    throw new Error("Failed to get changed files", { cause: e });
   }
 }
 

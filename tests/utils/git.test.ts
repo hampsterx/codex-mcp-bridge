@@ -8,7 +8,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: execFileSyncMock,
 }));
 
-import { getGitRoot, getUncommittedDiff, getBranchDiff, parseNumstat, getDiffStat } from "../../src/utils/git.js";
+import { getGitRoot, getUncommittedDiff, getBranchDiff, parseNumstat, getDiffStat, getDiffFiles, validateBaseRef } from "../../src/utils/git.js";
 
 beforeEach(() => {
   execFileSyncMock.mockReset();
@@ -219,5 +219,126 @@ describe("getDiffStat", () => {
   it("returns undefined on git error", () => {
     execFileSyncMock.mockImplementation(() => { throw new Error("not a repo"); });
     expect(getDiffStat("/tmp/nope", { type: "uncommitted" })).toBeUndefined();
+  });
+});
+
+describe("getDiffFiles", () => {
+  it("returns changed files for uncommitted diff", () => {
+    execFileSyncMock.mockReturnValue("src/foo.ts\nsrc/bar.ts\n");
+    const files = getDiffFiles("/repo", { type: "uncommitted" });
+    expect(files).toEqual(["src/foo.ts", "src/bar.ts"]);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/repo", "diff", "--name-only", "HEAD"],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
+  });
+
+  it("returns changed files for branch diff", () => {
+    execFileSyncMock.mockReturnValue("src/x.ts\n");
+    const files = getDiffFiles("/repo", { type: "branch", base: "main" });
+    expect(files).toEqual(["src/x.ts"]);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/repo", "diff", "--name-only", "main...HEAD"],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
+  });
+
+  it("returns empty array for empty diff", () => {
+    execFileSyncMock.mockReturnValue("");
+    expect(getDiffFiles("/repo", { type: "uncommitted" })).toEqual([]);
+  });
+
+  it("preserves paths with spaces", () => {
+    execFileSyncMock.mockReturnValue("src/my file.ts\ndocs/a b c.md\n");
+    expect(getDiffFiles("/repo", { type: "uncommitted" })).toEqual([
+      "src/my file.ts",
+      "docs/a b c.md",
+    ]);
+  });
+
+  it("includes root-level files", () => {
+    execFileSyncMock.mockReturnValue("package.json\nREADME.md\n");
+    expect(getDiffFiles("/repo", { type: "uncommitted" })).toEqual([
+      "package.json",
+      "README.md",
+    ]);
+  });
+
+  it("rejects base refs with shell-injection characters", () => {
+    expect(() => getDiffFiles("/repo", { type: "branch", base: "a; rm -rf" })).toThrow(
+      /Invalid base ref/,
+    );
+    expect(() => getDiffFiles("/repo", { type: "branch", base: "a b" })).toThrow(
+      /Invalid base ref/,
+    );
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts ancestry syntax (HEAD~2, main^) for parity with review", () => {
+    execFileSyncMock.mockReturnValue("");
+    getDiffFiles("/repo", { type: "branch", base: "HEAD~2" });
+    getDiffFiles("/repo", { type: "branch", base: "main^" });
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+    expect(execFileSyncMock.mock.calls[0]![0]).toBe("git");
+    expect(execFileSyncMock.mock.calls[0]![1]).toContain("HEAD~2...HEAD");
+    expect(execFileSyncMock.mock.calls[1]![1]).toContain("main^...HEAD");
+  });
+
+  it("rejects base refs that start with '-' (option injection guard)", () => {
+    expect(() => getDiffFiles("/repo", { type: "branch", base: "-foo" })).toThrow(
+      /Invalid base ref/,
+    );
+    expect(() => getDiffFiles("/repo", { type: "branch", base: "--no-index" })).toThrow(
+      /Invalid base ref/,
+    );
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts valid branch refs (origin/develop, feat/x)", () => {
+    execFileSyncMock.mockReturnValue("");
+    getDiffFiles("/repo", { type: "branch", base: "origin/develop" });
+    getDiffFiles("/repo", { type: "branch", base: "feat/x" });
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("wraps git errors with cause", () => {
+    const originalError = new Error("git failed");
+    execFileSyncMock.mockImplementation(() => { throw originalError; });
+
+    expect(() => getDiffFiles("/repo", { type: "uncommitted" })).toThrow(
+      "Failed to get changed files",
+    );
+    try {
+      getDiffFiles("/repo", { type: "uncommitted" });
+    } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((e as any).cause).toBe(originalError);
+    }
+  });
+});
+
+describe("validateBaseRef", () => {
+  it("accepts branch names, paths, and ancestry syntax", () => {
+    expect(() => validateBaseRef("main")).not.toThrow();
+    expect(() => validateBaseRef("origin/develop")).not.toThrow();
+    expect(() => validateBaseRef("feat/x")).not.toThrow();
+    expect(() => validateBaseRef("v1.2.3")).not.toThrow();
+    expect(() => validateBaseRef("HEAD~2")).not.toThrow();
+    expect(() => validateBaseRef("main^")).not.toThrow();
+    expect(() => validateBaseRef("main^^")).not.toThrow();
+  });
+
+  it("rejects leading dash (option injection guard)", () => {
+    expect(() => validateBaseRef("-foo")).toThrow(/must not start with -/);
+    expect(() => validateBaseRef("--no-index")).toThrow(/must not start with -/);
+  });
+
+  it("rejects shell metacharacters and whitespace", () => {
+    expect(() => validateBaseRef("a; rm -rf")).toThrow(/must be a valid git ref/);
+    expect(() => validateBaseRef("main`cmd`")).toThrow(/must be a valid git ref/);
+    expect(() => validateBaseRef("a b")).toThrow(/must be a valid git ref/);
+    expect(() => validateBaseRef("a:path")).toThrow(/must be a valid git ref/);
   });
 });

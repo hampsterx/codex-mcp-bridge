@@ -22,28 +22,36 @@ const MAX_DESCRIPTION_SIZE = 2048;
  * Handles both single-line strings and template literals.
  */
 function extractDescription(toolName: string): string {
-  // Match: registerTool(\n  "toolName",\n  {\n    title: ...\n    description: `...`,
-  // or description: "...",
+  // Isolate the registerTool block for this tool so the description
+  // regex doesn't drift into the next tool's definition.
+  const blockStart = indexSource.search(
+    new RegExp(`registerTool\\(\\s*"${toolName}"`),
+  );
+  if (blockStart < 0) {
+    throw new Error(`Could not locate registerTool for: ${toolName}`);
+  }
+  const rest = indexSource.slice(blockStart + 1);
+  const nextStart = rest.search(/registerTool\(\s*"/);
+  const block = nextStart >= 0
+    ? indexSource.slice(blockStart, blockStart + 1 + nextStart)
+    : indexSource.slice(blockStart);
+
   const patterns = [
     // Template literal (backtick)
-    new RegExp(
-      `registerTool\\(\\s*"${toolName}"[\\s\\S]*?description:\\s*\`([\\s\\S]*?)\``,
-    ),
+    /description:\s*`([\s\S]*?)`/,
     // Regular string
-    new RegExp(
-      `registerTool\\(\\s*"${toolName}"[\\s\\S]*?description:\\s*"([^"]*)"`,
-    ),
+    /description:\s*"([^"]*)"/,
   ];
 
   for (const pattern of patterns) {
-    const match = indexSource.match(pattern);
+    const match = block.match(pattern);
     if (match?.[1]) return match[1];
   }
   throw new Error(`Could not extract description for tool: ${toolName}`);
 }
 
 describe("tool descriptions", () => {
-  const tools = ["codex", "review", "search", "structured", "listSessions", "ping"];
+  const tools = ["codex", "review", "search", "structured", "listSessions", "ping", "assess"];
 
   for (const tool of tools) {
     it(`${tool} description exists and is non-empty`, () => {
@@ -85,21 +93,24 @@ describe("tool descriptions", () => {
   describe("review", () => {
     const desc = extractDescription("review");
 
-    it("describes both modes", () => {
-      expect(desc).toContain("Agentic");
-      expect(desc).toContain("Quick");
-      expect(desc).toContain("quick: true");
+    it("describes all three depth tiers", () => {
+      expect(desc).toContain("scan");
+      expect(desc).toContain("focused");
+      expect(desc).toContain("deep");
     });
 
-    it("includes timeout guidance", () => {
-      expect(desc).toContain("auto-scales");
-      expect(desc).toContain("2 minutes");
+    it("recommends assess tool", () => {
+      expect(desc).toContain("assess");
     });
 
     it("includes prompt tips", () => {
       expect(desc).toContain("Tips:");
       expect(desc).toContain("focus");
       expect(desc).toContain("security");
+    });
+
+    it("warns about focused mode on large diffs", () => {
+      expect(desc).toMatch(/large diff|>1000/i);
     });
   });
 
@@ -113,6 +124,25 @@ describe("tool descriptions", () => {
 
     it("clarifies no sensitive data", () => {
       expect(desc).toMatch(/no prompts|metadata/i);
+    });
+  });
+
+  describe("assess", () => {
+    const desc = extractDescription("assess");
+
+    it("describes purpose and no-cost nature", () => {
+      expect(desc).toMatch(/no CLI spawn|no model call|no cost/i);
+      expect(desc).toContain("review depth");
+    });
+
+    it("mentions all three depths", () => {
+      expect(desc).toContain("scan");
+      expect(desc).toContain("focused");
+      expect(desc).toContain("deep");
+    });
+
+    it("documents package-manifest promotion rule", () => {
+      expect(desc).toMatch(/package manifest|lockfile/i);
     });
   });
 

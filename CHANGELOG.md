@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`assess` tool**: pure-local diff assessment that classifies a git diff as
+ trivial / moderate / complex and suggests a review depth (`scan`, `focused`,
+ `deep`) with estimated wall-clock times. No CLI spawn, no model call, no
+ cost. Use before `review` to match review time to change size. Package
+ manifests and lockfiles (package.json, package-lock.json, pnpm-lock.yaml,
+ yarn.lock / composer.lock / other `*.lock`, tsconfig, go.mod, Cargo.toml,
+ pyproject.toml, requirements*.txt) anywhere in the repo, not just at the
+ root, promote the classification to `complex`.
+- **`getDiffFiles` git util**: returns the list of changed paths for a diff
+ spec via `git diff --name-only`. Shares base-ref validation with `review`
+ via a centralised `validateBaseRef` helper in `utils/git.ts`; both tools
+ accept alphanumeric, `-`, `_`, `/`, `.`, `~`, `^` (so ancestry refs like
+ `HEAD~1` / `main^` work in either tool).
+- **Review depth tiers**: new `depth` parameter with three values:
+ - `scan`: diff-only, single-pass (matches the old `quick: true` behaviour).
+ - `focused`: pre-inlines the diff and instructs Codex to read only the
+ changed files. Spawns with `--sandbox read-only --skip-git-repo-check
+ --ephemeral` (same containment stack as `query`). Containment past
+ no-writes is prompt-driven, Codex can still shell.
+ - `deep` (default): full agentic `--full-auto` exploration. Matches the
+ previous default behaviour.
+ Large diffs (>1000 insertions+deletions) in focused mode attach a warning
+ suggesting `depth: "deep"` due to context-window pressure.
+- **Per-depth timeout env vars**: `CODEX_REVIEW_SCAN_TIMEOUT_MS`,
+ `CODEX_REVIEW_FOCUSED_{BASE,PER_FILE,CAP,FALLBACK}_MS`,
+ `CODEX_REVIEW_DEEP_{BASE,PER_FILE,FALLBACK}_MS`. Operators can tune
+ timeouts without a release. Defaults preserve prior behaviour for scan
+ (120s) and deep (180s + 30s/file); focused is new (120s + 15s/file, cap
+ 300s). Deep fallback when diff stat is unavailable increased from 300s
+ to 600s.
+- **Per-depth MCP server defaults**: deep → `serena` (symbol nav), focused
+ and scan → `""` (disable all non-required). Explicit `mcpServers` tool
+ param and `CODEX_MCP_SERVERS` env var still override the default.
+
+### Changed
+
+- **BREAKING: `ReviewResult.mode` values changed** from `"agentic" | "quick"`
+ to `"scan" | "focused" | "deep"`. Programmatic consumers must update
+ assertions. The human-readable `Mode:` line in the tool output now emits
+ the new values. Pre-1.0 allows this clean break; no legacy-alias transition.
+- **Deprecation: `quick` parameter**. Still accepted: `quick: true` → scan,
+ `quick: false` → deep. When both `quick` and `depth` are set, `depth`
+ wins and a one-line warning is logged to stderr. Will be removed after
+ one minor cycle.
+
 ## [0.4.0] - 2026-04-13
 
 ### Added

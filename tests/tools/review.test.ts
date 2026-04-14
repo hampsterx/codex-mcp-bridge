@@ -33,12 +33,16 @@ vi.mock("../../src/utils/security.js", async () => {
   };
 });
 
-vi.mock("../../src/utils/git.js", () => ({
-  getGitRoot: getGitRootMock,
-  getUncommittedDiff: getUncommittedDiffMock,
-  getBranchDiff: getBranchDiffMock,
-  getDiffStat: getDiffStatMock,
-}));
+vi.mock("../../src/utils/git.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/utils/git.js")>("../../src/utils/git.js");
+  return {
+    ...actual,
+    getGitRoot: getGitRootMock,
+    getUncommittedDiff: getUncommittedDiffMock,
+    getBranchDiff: getBranchDiffMock,
+    getDiffStat: getDiffStatMock,
+  };
+});
 
 import { executeReview } from "../../src/tools/review.js";
 
@@ -92,7 +96,7 @@ describe("executeReview", () => {
     expect(call.cwd).toBe("/repo/root");
     expect(call.args).toEqual(["exec", "--model", "o3", "--full-auto", "--skip-git-repo-check"]);
     expect(call.stdin).toContain("git diff HEAD -U5");
-    expect(result.mode).toBe("agentic");
+    expect(result.mode).toBe("deep");
     expect(result.diffSource).toBe("uncommitted");
     expect(result.response).toBe("review findings");
     expect(result.model).toBe("o3");
@@ -109,7 +113,7 @@ describe("executeReview", () => {
     });
 
     expect(spawnCodexMock).not.toHaveBeenCalled();
-    expect(result.mode).toBe("quick");
+    expect(result.mode).toBe("scan");
     expect(result.response).toBe("No uncommitted changes found");
     expect(result.model).toBeUndefined();
   });
@@ -333,7 +337,7 @@ describe("executeReview", () => {
     });
 
     expect(spawnCodexMock).not.toHaveBeenCalled();
-    expect(result.mode).toBe("agentic");
+    expect(result.mode).toBe("deep");
     expect(result.response).toBe("No uncommitted changes found");
   });
 
@@ -348,7 +352,7 @@ describe("executeReview", () => {
     });
 
     expect(spawnCodexMock).not.toHaveBeenCalled();
-    expect(result.mode).toBe("agentic");
+    expect(result.mode).toBe("deep");
     expect(result.response).toBe("No diff found between main and HEAD");
     expect(result.diffSource).toBe("branch");
   });
@@ -364,7 +368,7 @@ describe("executeReview", () => {
     });
 
     expect(spawnCodexMock).not.toHaveBeenCalled();
-    expect(result.mode).toBe("quick");
+    expect(result.mode).toBe("scan");
     expect(result.response).toBe("No diff found between main and HEAD");
     expect(result.diffSource).toBe("branch");
   });
@@ -428,9 +432,242 @@ describe("executeReview", () => {
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.args).toEqual(["exec", "--model", "o3", "--sandbox", "read-only", "--skip-git-repo-check"]);
     expect(call.stdin).toContain("diff --git a/y b/y");
-    expect(result.mode).toBe("quick");
+    expect(result.mode).toBe("scan");
     expect(result.diffSource).toBe("branch");
     expect(result.base).toBe("main");
     expect(result.model).toBe("o3");
+  });
+});
+
+describe("review depth tiers", () => {
+  beforeEach(() => {
+    spawnCodexMock.mockReset();
+    verifyDirectoryMock.mockReset();
+    getGitRootMock.mockReset();
+    getUncommittedDiffMock.mockReset();
+    getBranchDiffMock.mockReset();
+    getDiffStatMock.mockReset();
+
+    verifyDirectoryMock.mockResolvedValue("/repo/requested");
+    getGitRootMock.mockReturnValue("/repo/root");
+    getDiffStatMock.mockReturnValue(undefined);
+
+    process.env["CODEX_MCP_SERVERS"] = "inherit";
+    delete process.env["CODEX_HOME"];
+  });
+
+  afterEach(() => {
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  const okSpawn = () => {
+    spawnCodexMock.mockResolvedValue({
+      stdout: "review findings",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+  };
+
+  it("depth=scan uses scan timeout and read-only sandbox args (no --full-auto)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    const result = await executeReview({ depth: "scan", uncommitted: true, model: "o3" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.args).toEqual(["exec", "--model", "o3", "--sandbox", "read-only", "--skip-git-repo-check"]);
+    expect(call.args).not.toContain("--full-auto");
+    expect(call.args).not.toContain("--ephemeral");
+    expect(call.stdin).toContain("diff --git a/x b/x");
+    expect(result.mode).toBe("scan");
+    expect(result.appliedTimeout).toBe(120_000);
+    expect(result.timeoutScaled).toBe(false);
+  });
+
+  it("depth=focused stacks --sandbox read-only + --skip-git-repo-check + --ephemeral, no --full-auto", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    const result = await executeReview({ depth: "focused", uncommitted: true, model: "o3" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.args).toEqual([
+      "exec", "--model", "o3", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
+    ]);
+    expect(call.args).not.toContain("--full-auto");
+    // Uses the focused prompt (inlined diff + read-changed-files instruction)
+    expect(call.stdin).toContain("Read the FULL contents");
+    expect(call.stdin).toContain("diff --git a/x b/x");
+    expect(result.mode).toBe("focused");
+  });
+
+  it("depth=deep uses --full-auto --skip-git-repo-check (no --sandbox, no --ephemeral)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    const result = await executeReview({ depth: "deep", uncommitted: true, model: "o3" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.args).toEqual(["exec", "--model", "o3", "--full-auto", "--skip-git-repo-check"]);
+    expect(call.args).not.toContain("--ephemeral");
+    expect(call.args).not.toContain("--sandbox");
+    // Deep mode passes only the diff spec, not the pre-inlined diff
+    expect(call.stdin).toContain("git diff HEAD -U5");
+    expect(result.mode).toBe("deep");
+  });
+
+  it("quick:true is equivalent to depth:scan (legacy alias)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    const [scanResult] = await Promise.all([
+      executeReview({ depth: "scan", uncommitted: true, model: "o3" }),
+    ]);
+    spawnCodexMock.mockClear();
+    const [legacyResult] = await Promise.all([
+      executeReview({ quick: true, uncommitted: true, model: "o3" }),
+    ]);
+
+    expect(scanResult.mode).toBe("scan");
+    expect(legacyResult.mode).toBe("scan");
+    expect(legacyResult.appliedTimeout).toBe(scanResult.appliedTimeout);
+  });
+
+  it("quick:false (no depth) defaults to depth:deep", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    const result = await executeReview({ quick: false, uncommitted: true });
+
+    expect(result.mode).toBe("deep");
+  });
+
+  it("depth wins over quick when both are set (logs deprecation)", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await executeReview({ depth: "focused", quick: true, uncommitted: true });
+
+    expect(result.mode).toBe("focused");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/'quick' is deprecated.*depth="focused"/),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("focused falls back to 240s when diffStat is unavailable", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    getDiffStatMock.mockReturnValue(undefined);
+    okSpawn();
+
+    const result = await executeReview({ depth: "focused", uncommitted: true });
+
+    expect(result.appliedTimeout).toBe(240_000);
+    expect(result.timeoutScaled).toBe(false);
+  });
+
+  it("focused scales timeout with file count, capped at 300s", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    getDiffStatMock.mockReturnValue({ files: 4, insertions: 40, deletions: 20 });
+    okSpawn();
+
+    const result = await executeReview({ depth: "focused", uncommitted: true });
+
+    // 120 + 15 * 4 = 180s
+    expect(result.appliedTimeout).toBe(180_000);
+    expect(result.timeoutScaled).toBe(true);
+  });
+
+  it("CODEX_REVIEW_FOCUSED_BASE_MS env override is honoured", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    getDiffStatMock.mockReturnValue({ files: 2, insertions: 20, deletions: 5 });
+    okSpawn();
+
+    process.env["CODEX_REVIEW_FOCUSED_BASE_MS"] = "60000";
+    try {
+      const result = await executeReview({ depth: "focused", uncommitted: true });
+      // 60 + 15 * 2 = 90s
+      expect(result.appliedTimeout).toBe(90_000);
+    } finally {
+      delete process.env["CODEX_REVIEW_FOCUSED_BASE_MS"];
+    }
+  });
+
+  it("no-diff early exit for focused does not spawn CLI", async () => {
+    getUncommittedDiffMock.mockImplementation(() => {
+      throw new Error("No uncommitted changes found");
+    });
+
+    const result = await executeReview({ depth: "focused", uncommitted: true });
+
+    expect(spawnCodexMock).not.toHaveBeenCalled();
+    expect(result.mode).toBe("focused");
+    expect(result.response).toBe("No uncommitted changes found");
+  });
+
+  it("focused large-diff warning attached when +/- total exceeds threshold", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    getDiffStatMock.mockReturnValue({ files: 8, insertions: 800, deletions: 400 });
+    okSpawn();
+
+    const result = await executeReview({ depth: "focused", uncommitted: true });
+
+    expect(result.response).toContain("large diff");
+    expect(result.response).toContain(`depth: "deep"`);
+  });
+
+  it("focused small-diff does not attach large-diff warning", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    getDiffStatMock.mockReturnValue({ files: 2, insertions: 20, deletions: 10 });
+    okSpawn();
+
+    const result = await executeReview({ depth: "focused", uncommitted: true });
+
+    expect(result.response).not.toContain("large diff");
+  });
+
+  it("explicit mcpServers wins over per-depth default", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+    delete process.env["CODEX_MCP_SERVERS"];
+    // Use an empty config (no servers configured) so "serena" is unknown and drops
+    // silently; we only care that the prompt selection reflects the override.
+    process.env["CODEX_HOME"] = join(FIXTURES, "codex-home-empty");
+
+    const result = await executeReview({
+      depth: "deep",
+      uncommitted: true,
+      mcpServers: "", // explicit empty → disable-all, no serena prompt
+    });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    // Deep mode with no serena → generic agentic prompt (not the "Use Serena" variant)
+    expect(call.stdin).not.toContain("get_symbols_overview");
+    expect(result.mode).toBe("deep");
+  });
+
+  it("focused maxResponseLength propagates into the prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    await executeReview({ depth: "focused", uncommitted: true, maxResponseLength: 250 });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).toMatch(/250 words/);
+  });
+
+  it("focused focus section propagates into the prompt", async () => {
+    getUncommittedDiffMock.mockReturnValue("diff --git a/x b/x");
+    okSpawn();
+
+    await executeReview({ depth: "focused", uncommitted: true, focus: "concurrency" });
+
+    const call = spawnCodexMock.mock.calls[0]![0];
+    expect(call.stdin).toContain("Pay special attention to: concurrency");
   });
 });

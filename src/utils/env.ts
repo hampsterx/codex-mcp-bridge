@@ -200,6 +200,64 @@ export function willEnableServer(override: string, name: string): boolean {
   return requested.has(name) || entry.required;
 }
 
+// --- Review timeout coefficients ---------------------------------------
+//
+// Review depth tiers (scan/focused/deep) each get their own timeout budget.
+// Values are exposed as env vars so an operator stuck on a repo where the
+// defaults consistently fail can tune without a release. Scan is constant;
+// focused and deep scale linearly with file count, capped.
+//
+// Defaults were chosen to match pre-depth behaviour where possible:
+//   - scan 120s matches the old QUICK_TIMEOUT (no change for existing callers)
+//   - deep 180 + 30/file matches v0.4.0 auto-scaling (no change for existing
+//     agentic callers)
+// Focused is new and picks a middle budget: 120 + 15/file, capped at 300s.
+// Fallback-when-stat-unavailable values are separate because the per-file
+// scaling can't apply without a file count.
+
+function readTimeoutMs(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(`codex-mcp-bridge: ignoring invalid ${key}='${raw}' (must be positive number of ms)`);
+    return fallback;
+  }
+  return n;
+}
+
+/** Scan (diff-only, single-pass) timeout. Env: CODEX_REVIEW_SCAN_TIMEOUT_MS. */
+export function scanTimeoutMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_SCAN_TIMEOUT_MS", 120_000);
+}
+
+/** Focused review: base + per-file * files, capped. Pre-inlined diff + read changed files. */
+export function focusedBaseMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_FOCUSED_BASE_MS", 120_000);
+}
+export function focusedPerFileMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_FOCUSED_PER_FILE_MS", 15_000);
+}
+export function focusedCapMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_FOCUSED_CAP_MS", 300_000);
+}
+/** Fallback when diff stat unavailable (can't compute file-count term). */
+export function focusedFallbackMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_FOCUSED_FALLBACK_MS", 240_000);
+}
+
+/** Deep (agentic) review: base + per-file * files, capped at HARD_TIMEOUT_CAP. */
+export function deepBaseMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_DEEP_BASE_MS", 180_000);
+}
+export function deepPerFileMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_DEEP_PER_FILE_MS", 30_000);
+}
+/** Fallback when diff stat unavailable. */
+export function deepFallbackMs(): number {
+  return readTimeoutMs("CODEX_REVIEW_DEEP_FALLBACK_MS", 600_000);
+}
+
 /** Build a minimal, safe environment for Codex CLI subprocesses. */
 export function buildSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {
