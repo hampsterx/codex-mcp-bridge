@@ -22,15 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
  accept alphanumeric, `-`, `_`, `/`, `.`, `~`, `^` (so ancestry refs like
  `HEAD~1` / `main^` work in either tool).
 - **Review depth tiers**: new `depth` parameter with three values:
- - `scan`: diff-only, single-pass (matches the old `quick: true` behaviour).
- - `focused`: pre-inlines the diff and instructs Codex to read only the
- changed files. Spawns with `--sandbox read-only --skip-git-repo-check
- --ephemeral` (same containment stack as `query`). Containment past
- no-writes is prompt-driven, Codex can still shell.
- - `deep` (default): full agentic `--full-auto` exploration. Matches the
- previous default behaviour.
- Large diffs (>1000 insertions+deletions) in focused mode attach a warning
- suggesting `depth: "deep"` due to context-window pressure.
+  - `scan`: diff-only, single-pass (matches the old `quick: true` behaviour).
+  - `focused`: pre-inlines the diff and instructs Codex to read only the
+    changed files. Spawns with `--sandbox read-only --skip-git-repo-check
+    --ephemeral` (same containment stack as `query`). Containment past
+    no-writes is prompt-driven, Codex can still shell.
+  - `deep` (default): full agentic `--full-auto` exploration. Matches the
+    previous default behaviour.
+
+  Large diffs (>1000 insertions+deletions) in focused mode attach a warning
+  suggesting `depth: "deep"` due to context-window pressure.
 - **Per-depth timeout env vars**: `CODEX_REVIEW_SCAN_TIMEOUT_MS`,
  `CODEX_REVIEW_FOCUSED_{BASE,PER_FILE,CAP,FALLBACK}_MS`,
  `CODEX_REVIEW_DEEP_{BASE,PER_FILE,FALLBACK}_MS`. Operators can tune
