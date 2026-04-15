@@ -35,9 +35,22 @@ codex exec "Analyze src/utils/parse.ts for edge cases"
 
 **Use this MCP bridge instead when:**
 - Your client has no shell access (Cursor, Windsurf, Claude Desktop, VS Code)
+- You want to know the cost before paying it: `assess` classifies a diff in <2s
+  (no CLI spawn) and recommends a review depth with estimated wall time
+- You need graduated review depth rather than all-or-nothing: `scan` (diff-only,
+  120s), `focused` (reads changed files, 120-300s), `deep` (full agentic, up to
+  30min) with per-depth auto-scaled timeouts. Focused containment is
+  `--sandbox read-only --skip-git-repo-check --ephemeral` plus prompt guidance;
+  Codex can still invoke shell commands, so it is lighter containment than
+  Gemini plan mode
 - You need structured output with JSON Schema validation (Codex CLI's `--json` has [known bugs](https://github.com/openai/codex/issues/16552))
-- You need automatic model fallback on quota exhaustion
-- You need concurrency management (max 3 parallel spawns, queuing)
+- You need partial response capture on timeout and automatic model fallback on
+  quota exhaustion
+- You want subprocess isolation: explicit env allowlist, no shell escape,
+  secret redaction on output, FIFO-queued concurrency (max 3 parallel spawns,
+  configurable via `CODEX_MAX_CONCURRENT`)
+- You need multi-turn conversations via session resume (`sessionId` /
+  `resetSession`, inspected via `listSessions`)
 
 ## Quick Start
 
