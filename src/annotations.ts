@@ -63,3 +63,11 @@ export const pingAnnotations: ToolAnnotations = {
   idempotentHint: true,
   openWorldHint: false,
 };
+
+export const assessAnnotations: ToolAnnotations = {
+  title: "Diff Assessment",
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};

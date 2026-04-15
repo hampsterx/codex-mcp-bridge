@@ -6,6 +6,7 @@ import {
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
+  assessAnnotations,
 } from "../../src/annotations.js";
 
 const allAnnotations = {
@@ -15,6 +16,7 @@ const allAnnotations = {
   structured: structuredAnnotations,
   listSessions: listSessionsAnnotations,
   ping: pingAnnotations,
+  assess: assessAnnotations,
 };
 
 const ANNOTATION_KEYS = [
@@ -75,5 +77,12 @@ describe("tool annotations", () => {
     expect(pingAnnotations.destructiveHint).toBe(false);
     expect(pingAnnotations.idempotentHint).toBe(true);
     expect(pingAnnotations.openWorldHint).toBe(false);
+  });
+
+  it("assess is read-only, idempotent, and closed-world (pure-local, no CLI spawn)", () => {
+    expect(assessAnnotations.readOnlyHint).toBe(true);
+    expect(assessAnnotations.destructiveHint).toBe(false);
+    expect(assessAnnotations.idempotentHint).toBe(true);
+    expect(assessAnnotations.openWorldHint).toBe(false);
   });
 });
