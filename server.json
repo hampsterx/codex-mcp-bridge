@@ -1,0 +1,54 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hampsterx/codex-mcp-bridge",
+  "description": "MCP server that wraps OpenAI Codex CLI for agentic query, code review (scan/focused/deep), web search, diff assessment, structured output, and session listing. Adds concurrency control, model fallback on quota, per-server MCP grammar, and Windows path handling.",
+  "repository": {
+    "url": "https://github.com/hampsterx/codex-mcp-bridge",
+    "source": "github"
+  },
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "codex-mcp-bridge",
+      "version": "0.5.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CODEX_CLI_PATH",
+          "description": "Path to the codex CLI binary. Defaults to 'codex' on PATH.",
+          "format": "string",
+          "isRequired": false,
+          "default": "codex"
+        },
+        {
+          "name": "CODEX_DEFAULT_MODEL",
+          "description": "Default Codex model for query/review/search.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CODEX_FALLBACK_MODEL",
+          "description": "Model to use when the primary model hits a quota error.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CODEX_MAX_CONCURRENT",
+          "description": "Maximum concurrent Codex CLI subprocesses (default 3).",
+          "format": "number",
+          "isRequired": false,
+          "default": 3
+        },
+        {
+          "name": "CODEX_MCP_SERVERS",
+          "description": "Controls which MCP servers from ~/.codex/config.toml stay enabled inside the Codex subprocess. Empty/unset disables all non-required servers; 'inherit' passes config through; comma-separated names (e.g. 'serena,github') enables those; values starting with '{' or '[' are raw TOML.",
+          "format": "string",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

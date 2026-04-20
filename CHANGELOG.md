@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-21
+
+### Added
+
+- **MCP Registry manifest**: `server.json` describing the server for
+ [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io).
+ Added `mcpName: io.github.hampsterx/codex-mcp-bridge` to `package.json` so
+ the registry can verify npm ownership against the published tarball.
+ No runtime behaviour change.
+
 ## [0.5.0] - 2026-04-15
 
 ### Added
