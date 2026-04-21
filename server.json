@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.hampsterx/codex-mcp-bridge",
-  "description": "MCP server that wraps OpenAI Codex CLI for agentic query, code review (scan/focused/deep), web search, diff assessment, structured output, and session listing. Adds concurrency control, model fallback on quota, per-server MCP grammar, and Windows path handling.",
+  "description": "Wraps Codex CLI as MCP tools: query, review, search, assess, structured, sessions.",
   "repository": {
     "url": "https://github.com/hampsterx/codex-mcp-bridge",
     "source": "github"
@@ -40,7 +40,7 @@
           "description": "Maximum concurrent Codex CLI subprocesses (default 3).",
           "format": "number",
           "isRequired": false,
-          "default": 3
+          "default": "3"
         },
         {
           "name": "CODEX_MCP_SERVERS",
