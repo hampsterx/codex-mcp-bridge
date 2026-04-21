@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.codex
 .codex/
 .claude/
 *.tsbuildinfo
@@ -22,6 +21,6 @@ coverage/
 !/CONTRIBUTING.md
 !/CHANGELOG.md
 !/LICENSE.md
-!/CLAUDE.md
+!/AGENTS.md
 !/DESIGN.md
 !/SECURITY.md
