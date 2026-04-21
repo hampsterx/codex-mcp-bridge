@@ -1,4 +1,8 @@
-# CLAUDE.md - codex-mcp-bridge
+# AGENTS.md - codex-mcp-bridge
+
+Guidance for AI coding agents working in the codex-mcp-bridge repository.
+
+This file defines repository-specific operating rules for autonomous or semi-autonomous coding agents. Follow these instructions unless a maintainer explicitly tells you otherwise.
 
 ## Project Overview
 
@@ -142,6 +146,9 @@ subprocess cost. The grammar narrowed in this release: old builds accepted
 any non-empty non-`inherit` value as raw TOML; now only values starting with
 `{` or `[` do. Unreleased env var, non-breaking.
 
+This grammar is codex-only and part of the bridge's value proposition over
+bare Codex CLI. Do not break it during refactors (see Release Footguns below).
+
 ## Testing
 
 - `tests/tools/` - Tool-level tests (mock subprocess)
@@ -157,6 +164,20 @@ any non-empty non-`inherit` value as raw TOML; now only values starting with
 
 See [RELEASING.md](RELEASING.md) for the full checklist including pre-release checks, publish steps, and post-release npm validation.
 
+## Release Footguns
+
+Pitfalls hit often enough to call out here. Cross-reference [RELEASING.md](RELEASING.md) for the full checklist and [TRACKING_UPSTREAM_ISSUES.md](TRACKING_UPSTREAM_ISSUES.md) for upstream Codex issues we depend on.
+
+- **`mcpName` in `package.json` must match `server.json.name`.** The MCP Registry verifies ownership by reading `mcpName` from the published tarball and cross-checking `server.json`. Mismatch = registry rejects publish. Current value: `io.github.hampsterx/codex-mcp-bridge`.
+- **`server.json` version must match `package.json` and the npm tarball.** `npm version X.Y.Z` updates `package.json` + `package-lock.json` but does **not** touch `server.json`. Bump top-level `version` and `packages[0].version` by hand. Registry rejects any mismatch.
+- **`server.json` env var defaults must be strings.** Even when the field declares `format: "number"` or `format: "boolean"`, the registry schema requires the `default` to be a JSON string (`"3"`, `"true"`). The declared `format` is advisory; the serialized default is still validated as a string. Convergent reviewer suggestions to "fix the type mismatch" by changing `"3"` → `3` will pass local schema linters and then fail at publish time.
+- **OIDC publish requires npm ≥ 11.5.1.** Node 20 in GitHub Actions ships npm 10, which does not support OIDC trusted publishing. `publish.yml` works around this with `npx --yes npm@latest publish --provenance --access public`. Do not revert to bare `npm publish`.
+- **Model fallback on quota exhaustion is a feature, not a bug.** Default fallback is `o3` (v0.2.3+). Removing or disabling without a deprecation plan breaks silent recovery that downstream users rely on. `CODEX_FALLBACK_MODEL=none` is the opt-out.
+- **Session resume / `forked_from_id`.** Codex CLI has native `forked_from_id` support the bridge deliberately does not expose. Do not naively wire up `--resume` pass-through; see [PLAN_MCP_INTROSPECTION_2.md](PLAN_MCP_INTROSPECTION_2.md) and [TRACKING_LSP_SEMANTIC_NAVIGATION.md](TRACKING_LSP_SEMANTIC_NAVIGATION.md) for nuance before changing session behaviour.
+- **Windows path handling.** `src/utils/windows.ts` exists for a reason. Any new CLI spawn that builds args must go through the shared path normaliser; shell escaping on Windows is not the same as POSIX.
+- **`CODEX_MCP_SERVERS` grammar is codex-only.** Refactors that "simplify" the env var handling have a habit of collapsing the four branches into one broken case. Run the dedicated test suite before changing parsing.
+- **Upstream contributions are invitation-only.** `openai/codex` does not accept unsolicited PRs. File an issue first, wait for maintainer response. See [TRACKING_UPSTREAM_ISSUES.md](TRACKING_UPSTREAM_ISSUES.md) for the current issue/PR map and [HANDOVER_MCP_INIT_EVENTS_UPSTREAM.md](HANDOVER_MCP_INIT_EVENTS_UPSTREAM.md) for the PR framing template.
+
 ## Git Workflow
 
 - Use feature branches with PRs for all changes (do not commit directly to master)
@@ -170,3 +191,15 @@ See [RELEASING.md](RELEASING.md) for the full checklist including pre-release ch
 - Error messages must be actionable ("codex CLI not found - install with: npm i -g @openai/codex")
 - All public functions must have JSDoc
 - Tests colocated by directory: `tests/tools/`, `tests/utils/`
+
+## Agent Filename Hint
+
+`AGENTS.md` is the canonical agent instructions file for this repository. Codex CLI reads it natively. If your coding agent expects a different filename (some tools look for `CLAUDE.md`, `GEMINI.md`, `COPILOT.md`), create a local symlink rather than copying the file so both stay in sync:
+
+```bash
+ln -s AGENTS.md CLAUDE.md
+ln -s AGENTS.md GEMINI.md
+ln -s AGENTS.md COPILOT.md
+```
+
+Note: the maintainer's personal `CLAUDE.md` is gitignored in this repo, so a clone starts without one. The symlinks above are safe to create in a fresh clone.
