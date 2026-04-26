@@ -166,7 +166,7 @@ The bridge runs `codex exec --sandbox read-only` with the supplied prompt and re
 
 A starting point; adapt freely:
 
-```
+```text
 Review the following diff:
 
 <diff content>

@@ -59,7 +59,7 @@ Tips:
       model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
       sandbox: z
         .enum(["read-only", "workspace-write", "full-auto"])
-        .optional()
+        .default("read-only")
         .describe("Sandbox level: read-only (default), workspace-write, or full-auto (Codex CLI convenience mode for workspace-write with auto-approve)"),
       sessionId: z
         .string()
