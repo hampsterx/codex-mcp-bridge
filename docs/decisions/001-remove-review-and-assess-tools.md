@@ -24,11 +24,9 @@ Both review paths are documented in [README § Code review with this CLI](../../
 
 ## Alternatives considered
 
-**Keep `review` with caller-supplied prompts.** Functionally equivalent to `codex` with `sandbox: "read-only"`. Two tools with the same contract differ only in name.
-
-**Keep `assess` as a standalone diff classifier.** Its public surface is calibrated to `review`'s depth grammar; without that consumer, the recommendations are unanchored.
-
-**Keep `review` as a thin "review-preset" wrapper around `codex`.** Defaults the wrapper would set (sandbox, timeout) are caller decisions; the bridge has no information the caller does not.
+- **Keep `review` with caller-supplied prompts.** Functionally equivalent to `codex` with `sandbox: "read-only"`; two tools sharing one contract differ only in name.
+- **Keep `assess` as a standalone diff classifier.** Its public surface is calibrated to `review`'s depth grammar; without that consumer, the recommendations are unanchored.
+- **Keep `review` as a thin "review-preset" wrapper.** Defaults it would set (sandbox, timeout) are caller decisions; the bridge has no information the caller does not.
 
 ## Cross-references
 
