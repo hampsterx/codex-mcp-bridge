@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-26
+
+### Removed
+
+- **`review` tool**: bundled reviewer prompts and depth selector retired. Use
+  the native `codex review --base <branch>` for diff-aware review, or call the
+  `codex` tool with `sandbox: "read-only"` and a caller-supplied review prompt.
+  See [README § Code review with this CLI](README.md#code-review-with-this-cli)
+  and [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md).
+- **`assess` tool**: removed alongside `review`. Its only consumer was the
+  `review` depth grammar; without `review` the recommendations have no anchor.
+- **Bundled reviewer prompts**: `prompts/review-agentic.md`,
+  `prompts/review-agentic-with-serena.md`, `prompts/review-focused.md`,
+  `prompts/review-quick.md`.
+- **Review-only env vars**: `CODEX_REVIEW_SCAN_TIMEOUT_MS`,
+  `CODEX_REVIEW_FOCUSED_BASE_MS`, `CODEX_REVIEW_FOCUSED_PER_FILE_MS`,
+  `CODEX_REVIEW_FOCUSED_CAP_MS`, `CODEX_REVIEW_FOCUSED_FALLBACK_MS`,
+  `CODEX_REVIEW_DEEP_BASE_MS`, `CODEX_REVIEW_DEEP_PER_FILE_MS`,
+  `CODEX_REVIEW_DEEP_FALLBACK_MS`. No replacement; callers manage timeouts
+  via the existing per-call `timeout` parameter on the `codex` tool.
+
+### Changed
+
+- **Tool surface**: `codex`, `query`, `search`, `structured`, `ping`,
+  `listSessions` (was: those plus `review` and `assess`).
+
 ## [0.5.1] - 2026-04-21
 
 ### Added

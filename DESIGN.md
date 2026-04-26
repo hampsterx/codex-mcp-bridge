@@ -8,7 +8,9 @@ Architecture and implementation details for codex-mcp-bridge.
 MCP Client  --stdio-->  codex-mcp-bridge  --spawn-->  codex CLI subprocess
 ```
 
-The bridge assembles prompts in TypeScript and spawns the Codex CLI as a subprocess. The `review` tool's agentic mode runs Codex in `--full-auto` inside the target repo, letting it explore files, follow imports, and read project instruction files. The bridge captures output, parses it, and returns structured MCP responses.
+The bridge assembles prompts in TypeScript and spawns the Codex CLI as a subprocess. The `codex` tool can run in `read-only`, `workspace-write`, or `full-auto` sandbox modes; the other tools spawn into isolated read-only contexts. The bridge captures output, parses it, and returns structured MCP responses.
+
+For code review the bridge has no opinion on prompt content: callers either invoke `codex review` directly, or pass a review prompt to the `codex` tool with `sandbox: "read-only"`. See [README § Code review with this CLI](README.md#code-review-with-this-cli) and [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md).
 
 ## Subprocess Spawning
 
@@ -68,18 +70,17 @@ All tools declare [MCP tool annotations](https://modelcontextprotocol.io/specifi
 | Tool | readOnlyHint | destructiveHint | openWorldHint |
 |------|-------------|----------------|---------------|
 | codex | false | true | true |
-| review | false | true | true |
 | search | true | false | true |
 | query | true | false | true |
 | structured | true | false | true |
 | ping | true | false | false |
 | listSessions | true | false | false |
 
-The `codex` and `review` tools are marked destructive because full-auto sandbox mode can write files. Most tools are `openWorldHint: true` since they spawn a CLI that can access files and network.
+The `codex` tool is marked destructive because its `workspace-write` and `full-auto` sandbox modes can write files. Most tools are `openWorldHint: true` since they spawn a CLI that can access files and network.
 
 ## Progress Notifications
 
-The `codex`, `review`, `search`, and `query` tools emit MCP `notifications/progress` every 15 seconds when the client provides a `progressToken` in the request's `_meta`. Heartbeats include elapsed time. Notifications are fire-and-forget; clients that don't support progress notifications are unaffected.
+The `codex`, `search`, and `query` tools emit MCP `notifications/progress` every 15 seconds when the client provides a `progressToken` in the request's `_meta`. Heartbeats include elapsed time. Notifications are fire-and-forget; clients that don't support progress notifications are unaffected.
 
 Implemented in `src/utils/progress.ts`.
 
@@ -100,7 +101,7 @@ Branches evaluated top-to-bottom:
 
 ### Per-tool defaults
 
-The `review` tool's agentic mode defaults to `CODEX_MCP_SERVERS=serena` so symbol navigation is available during review. Pass the `mcpServers` tool parameter to override per-invocation (e.g. `"ck-search,serena"` for deeper review, or `"inherit"` to debug). Quick review mode and all other tools use disable-all.
+All tools use disable-all by default. The `codex` tool inherits from the `CODEX_MCP_SERVERS` env var; pass `mcpServers: "inherit"` (when supported by upstream) to debug.
 
 ### Required servers
 
@@ -112,10 +113,4 @@ A blanket `-c mcp_servers={}` override silently no-ops on older Codex versions: 
 
 ## Prompt Templates
 
-The `review`, `search`, and `query` tools load prompt templates from the `prompts/` directory. Templates are filled with placeholders (diff content, focus area, etc.). Editable when running from a local clone; bundled when running via `npx`.
-
-## Review Timeouts
-
-The `review` tool uses static defaults: 300s for agentic mode, 120s for quick mode, with a 600s hard cap. A caller-supplied `timeout` parameter always takes precedence.
-
-Unlike gemini-mcp-bridge, codex-mcp-bridge does not yet auto-scale timeouts from diff size (Codex CLI's fast startup makes this less critical).
+The `search` and `query` tools load prompt templates from the `prompts/` directory. Templates are filled with placeholders. Editable when running from a local clone; bundled when running via `npx`. The `codex` tool is fully caller-driven: no bridge-side templates.

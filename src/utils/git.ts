@@ -14,13 +14,9 @@ export type DiffSpec = { type: "uncommitted" } | { type: "branch"; base: string 
  * These cover branch paths (origin/main) and ancestry syntax (HEAD~1, main^).
  *
  * Excludes `:` because tree-ish refs (v1.0:path) don't work with the
- * `base...HEAD` symmetric-difference syntax used by the review / assess
- * tools. Subprocess spawning with shell: false prevents actual injection,
+ * `base...HEAD` symmetric-difference syntax used by the diff helpers.
+ * Subprocess spawning with shell: false prevents actual injection,
  * so this is defense-in-depth.
- *
- * Shared by `review` and `assess` so both accept the same ref grammar.
- * Previously the two utilities disagreed, causing `assess({ base: "HEAD~1" })`
- * to fail even though the corresponding `review` call worked.
  */
 export function validateBaseRef(base: string): void {
   if (base.startsWith("-")) {
@@ -59,9 +55,9 @@ export function parseNumstat(output: string): DiffStat {
 
 /**
  * Get numstat summary for a diff spec. Uses `git diff HEAD` for the
- * uncommitted case so the stat matches what the agentic review prompt
- * actually executes (`git diff HEAD -U5`). Returns undefined on failure
- * (non-git dir, empty diff, etc.) rather than throwing.
+ * uncommitted case (matches the staged + unstaged surface a typical
+ * caller-supplied review prompt operates on). Returns undefined on
+ * failure (non-git dir, empty diff, etc.) rather than throwing.
  */
 export function getDiffStat(cwd: string, spec: DiffSpec): DiffStat | undefined {
   const run = (refArgs: string[]): string =>

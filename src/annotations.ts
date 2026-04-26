@@ -5,19 +5,12 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
  *
  * Annotations are hints that help MCP clients understand tool behavior
  * for permission prompts, safety checks, and orchestration decisions.
- * Values reflect worst-case behavior (e.g. review uses full-auto by default).
+ * Values reflect worst-case behavior (e.g. codex defaults to read-only
+ * but accepts workspace-write/full-auto).
  */
 
 export const codexAnnotations: ToolAnnotations = {
   title: "Codex CLI",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: true,
-};
-
-export const reviewAnnotations: ToolAnnotations = {
-  title: "Code Review",
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: false,
@@ -58,14 +51,6 @@ export const queryAnnotations: ToolAnnotations = {
 
 export const pingAnnotations: ToolAnnotations = {
   title: "Health Check",
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-};
-
-export const assessAnnotations: ToolAnnotations = {
-  title: "Diff Assessment",
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,

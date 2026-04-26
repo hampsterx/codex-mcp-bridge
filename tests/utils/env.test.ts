@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
   buildSubprocessEnv,
   getMcpServerOverride,
-  willEnableServer,
 } from "../../src/utils/env.js";
 
 const FIXTURES = join(process.cwd(), "tests", "fixtures");
@@ -301,11 +300,10 @@ describe("getMcpServerOverride", () => {
   });
 
   it("comma list: emits enabled=true for a requested server that config.toml disables", () => {
-    // Regression for the review.ts serena-prompt mismatch. codex-home-disabled
-    // has playwright (enabled by default) and serena (enabled=false). Asking
-    // for serena via the env var must emit an explicit enabled=true so Codex
-    // actually turns it on — otherwise willEnableServer picks the serena-aware
-    // prompt while the subprocess has no serena tools.
+    // codex-home-disabled has playwright (enabled by default) and serena
+    // (enabled=false). Asking for serena via the env var must emit an
+    // explicit enabled=true so Codex actually turns it on rather than
+    // silently dropping it.
     process.env["CODEX_MCP_SERVERS"] = "serena";
     process.env["CODEX_HOME"] = fixtureHome("codex-home-disabled");
     expect(getMcpServerOverride()).toEqual([
@@ -432,8 +430,8 @@ describe("getMcpServerOverride", () => {
     try {
       delete process.env["CODEX_MCP_SERVERS"];
       process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
-      // Tool-default path: review.ts passes "" explicitly for quick mode with
-      // silent:true so users who never set anything don't see warnings.
+      // Tool-default path: query.ts passes "" explicitly with silent:true
+      // so users who never set anything don't see warnings.
       const args = getMcpServerOverride("", { silent: true });
       expect(args).toEqual([
         "-c", "mcp_servers.baz.enabled=false",
@@ -443,83 +441,5 @@ describe("getMcpServerOverride", () => {
     } finally {
       warnSpy.mockRestore();
     }
-  });
-});
-
-describe("willEnableServer", () => {
-  const origCodexHome = process.env["CODEX_HOME"];
-
-  afterEach(() => {
-    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
-    else process.env["CODEX_HOME"] = origCodexHome;
-  });
-
-  it("empty override: non-required servers are disabled, so serena is off", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("", "serena")).toBe(false);
-  });
-
-  it("empty override: required servers stay on", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
-    expect(willEnableServer("", "bar")).toBe(true);
-    expect(willEnableServer("", "foo")).toBe(false);
-  });
-
-  it("inherit: configured server is reported enabled", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("inherit", "serena")).toBe(true);
-    expect(willEnableServer("inherit", "github")).toBe(true);
-  });
-
-  it("inherit: unknown server is not enabled", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("inherit", "not-a-server")).toBe(false);
-  });
-
-  it("inherit: respects explicit enabled=false in config.toml", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-disabled");
-    expect(willEnableServer("inherit", "serena")).toBe(false);
-    expect(willEnableServer("inherit", "playwright")).toBe(true);
-  });
-
-  it("comma list: named server is enabled", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("serena", "serena")).toBe(true);
-    expect(willEnableServer("serena,github", "github")).toBe(true);
-  });
-
-  it("comma list: unnamed server is disabled unless required", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-required");
-    expect(willEnableServer("foo", "baz")).toBe(false);
-    expect(willEnableServer("foo", "bar")).toBe(true); // bar is required
-  });
-
-  it("comma list: trims whitespace around names", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer(" serena , github ", "serena")).toBe(true);
-  });
-
-  it("raw TOML override is intentionally conservative and returns false", () => {
-    // Documented behaviour: raw TOML is a power-user escape hatch. Rather than
-    // duplicate Codex's TOML parsing (and inherit its failure modes on invalid
-    // input), willEnableServer always reports "not enabled" for raw overrides.
-    // Callers who need the serena prompt alongside raw TOML should pass the
-    // list form explicitly.
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("{ serena = { enabled = true } }", "serena")).toBe(false);
-    expect(willEnableServer("{ serena = { enabled = false } }", "serena")).toBe(false);
-    expect(willEnableServer("[serena]", "serena")).toBe(false);
-  });
-
-  it("comma list: typoed server name is not reported enabled", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-url");
-    // codex-home-url has github + atlassian, no serena. Asking for "serena"
-    // in the list doesn't magically configure it.
-    expect(willEnableServer("serena", "serena")).toBe(false);
-  });
-
-  it("whitespace-only override is treated as empty (disable-all)", () => {
-    process.env["CODEX_HOME"] = fixtureHome("codex-home-mixed");
-    expect(willEnableServer("   ", "serena")).toBe(false);
   });
 });

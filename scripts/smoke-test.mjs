@@ -12,7 +12,6 @@
  * Examples:
  *   node scripts/smoke-test.mjs                     # codex tool, cwd
  *   node scripts/smoke-test.mjs codex /tmp           # codex tool, /tmp
- *   node scripts/smoke-test.mjs review ~/NUI/cream   # review tool against cream
  *   node scripts/smoke-test.mjs search               # web search
  *   node scripts/smoke-test.mjs query                # lightweight query
  *   node scripts/smoke-test.mjs ping                 # health check
@@ -43,19 +42,6 @@ try {
     });
     console.log("response:", result.response);
     console.log("sessionId:", result.sessionId);
-    console.log("timedOut:", result.timedOut);
-  } else if (tool === "review") {
-    const { executeReview } = await import("../dist/tools/review.js");
-    const result = await executeReview({
-      uncommitted: true,
-      quick: true,
-      workingDirectory,
-      timeout: 120_000,
-      maxResponseLength: 100,
-    });
-    console.log("response:", result.response.slice(0, 200) + (result.response.length > 200 ? "..." : ""));
-    console.log("mode:", result.mode);
-    console.log("diffSource:", result.diffSource);
     console.log("timedOut:", result.timedOut);
   } else if (tool === "search") {
     const { executeSearch } = await import("../dist/tools/search.js");
@@ -109,7 +95,7 @@ try {
       console.log(`  ${sessionId}: turns=${entry.turnCount}, model=${entry.model ?? "unknown"}, created=${new Date(entry.createdAt).toISOString()}`);
     }
   } else {
-    console.error(`Unknown tool: ${tool}. Use: codex, review, search, query, ping, structured, listSessions`);
+    console.error(`Unknown tool: ${tool}. Use: codex, search, query, ping, structured, listSessions`);
     process.exit(1);
   }
 

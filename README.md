@@ -8,7 +8,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2)](https://modelcontextprotocol.io/)
 
-MCP server that wraps [Codex CLI](https://github.com/openai/codex) as a subprocess, exposing code execution, agentic review, web search, and structured output as [Model Context Protocol](https://modelcontextprotocol.io/) tools.
+MCP server that wraps [Codex CLI](https://github.com/openai/codex) as a subprocess, exposing code execution, web search, and structured output as [Model Context Protocol](https://modelcontextprotocol.io/) tools.
 
 Works with any MCP client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code, or any tool that speaks MCP.
 
@@ -26,8 +26,8 @@ codex review --uncommitted
 # Review with custom focus
 codex review --base main "Focus on security and error handling"
 
-# From a worktree
-codex -C /path/to/worktree review --base main
+# From a worktree (run inside the worktree; `-C` is broken for `review`)
+cd /path/to/worktree && codex review --base main
 
 # General analysis
 codex exec "Analyze src/utils/parse.ts for edge cases"
@@ -35,14 +35,6 @@ codex exec "Analyze src/utils/parse.ts for edge cases"
 
 **Use this MCP bridge instead when:**
 - Your client has no shell access (Cursor, Windsurf, Claude Desktop, VS Code)
-- You want to know the cost before paying it: `assess` classifies a diff in <2s
-  (no CLI spawn) and recommends a review depth with estimated wall time
-- You need graduated review depth rather than all-or-nothing: `scan` (diff-only,
-  120s), `focused` (reads changed files, 120-300s), `deep` (full agentic, up to
-  30min) with per-depth auto-scaled timeouts. Focused containment is
-  `--sandbox read-only --skip-git-repo-check --ephemeral` plus prompt guidance;
-  Codex can still invoke shell commands, so it is lighter containment than
-  Gemini plan mode
 - You need structured output with JSON Schema validation (Codex CLI's `--json` has [known bugs](https://github.com/openai/codex/issues/16552))
 - You need partial response capture on timeout and automatic model fallback on
   quota exhaustion
@@ -51,6 +43,9 @@ codex exec "Analyze src/utils/parse.ts for edge cases"
   configurable via `CODEX_MAX_CONCURRENT`)
 - You need multi-turn conversations via session resume (`sessionId` /
   `resetSession`, inspected via `listSessions`)
+
+Worktree note: Codex CLI issue [#9084](https://github.com/openai/codex/issues/9084)
+breaks `codex -C /path review ...`. Run `codex review` from inside the worktree to avoid it.
 
 ## Quick Start
 
@@ -102,8 +97,7 @@ Add to your MCP settings:
 
 | Tool | Description |
 |------|-------------|
-| **codex** | Execute prompts with file context, session resume, and sandbox control. Multi-turn conversations via session IDs. |
-| **review** | Agentic code review. Codex runs in full-auto inside the repo: diffs, reads files, follows imports, checks tests. Quick diff-only mode available. |
+| **codex** | Execute prompts with file context, session resume, and sandbox control. Multi-turn conversations via session IDs. For code review, use `sandbox: "read-only"` with a caller-supplied review prompt; see [Code review with this CLI](#code-review-with-this-cli). |
 | **search** | Web search via `codex --search`. Returns synthesized answers with source URLs. |
 | **query** | Lightweight text analysis. No repo context, no sessions. Runs in an isolated temp directory. |
 | **structured** | JSON Schema validated output via [Ajv](https://ajv.js.org/). Data extraction, classification, or any task needing machine-parseable output. |
@@ -115,14 +109,6 @@ Add to your MCP settings:
 General-purpose execution. Supports multi-turn conversations via `sessionId`, sandbox levels (`read-only`, `workspace-write`, `full-auto`), and reasoning effort control. Pass `resetSession: true` to discard and start fresh. Use `listSessions` to inspect active sessions before resuming.
 
 Key parameters: `prompt` (required), `files`, `model`, `sessionId`, `sandbox`, `reasoningEffort`, `workingDirectory`, `timeout` (default 60s).
-
-### review
-
-Two modes:
-- **Agentic** (default): Codex runs in `--full-auto` inside the repo. It diffs, reads files, follows imports, checks tests, and reads project instruction files before reviewing. Timeout auto-scales from diff size.
-- **Quick** (`quick: true`): Diff-only review, no repo exploration. Faster but less context.
-
-Key parameters: `uncommitted` (default true), `base`, `focus`, `quick`, `workingDirectory`, `timeout` (default auto-scaled agentic, 120s quick).
 
 ### search
 
@@ -148,6 +134,55 @@ No parameters. Returns CLI version, auth status, model configuration, and concur
 
 All tools attach execution metadata (`_meta`) with `durationMs`, `model`, `fallbackUsed`, and session info where applicable. See [DESIGN.md](DESIGN.md) for details.
 
+## Code review with this CLI
+
+This bridge does not bundle reviewer prompts. There are two paths for code review:
+
+### Native upstream `codex review`
+
+```bash
+codex review --base main
+codex review --uncommitted
+codex review --base main "Focus on security and error handling"
+```
+
+Diff-aware review built into Codex CLI. No bridge involvement.
+
+### Bridge `codex` tool with caller-supplied prompt
+
+```jsonc
+{
+  "tool": "codex",
+  "arguments": {
+    "prompt": "<your review prompt + diff or file references>",
+    "sandbox": "read-only"
+  }
+}
+```
+
+The bridge runs `codex exec --sandbox read-only` with the supplied prompt and returns stdout.
+
+### Representative review prompt
+
+A starting point; adapt freely:
+
+```
+Review the following diff:
+
+<diff content>
+
+Look for:
+- Bugs that would surface in production
+- Missing error handling on user-supplied input
+- Tests modified to silence failures rather than verify behaviour
+- Security issues (injection, missing auth checks, secret leaks)
+
+For each finding cite file:line, severity (high/medium/low), and a suggested fix.
+Skip style/formatting; assume an autoformatter handles those.
+```
+
+The bridge has no opinion on prompt content. See [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md) for the rationale.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -162,7 +197,7 @@ All tools attach execution metadata (`_meta`) with `durationMs`, `model`, `fallb
 
 | You need... | Consider |
 |-------------|----------|
-| Agentic code review, structured output, model fallback, concurrency management | This bridge |
+| Structured output, model fallback, concurrency management, session resume | This bridge |
 | Session threading with `conversationId`, callback URI forwarding | [@tuannvm/codex-mcp-server](https://github.com/tuannvm/codex-mcp-server) |
 | Structured patch output with approval policies | [cexll/codex-mcp-server](https://github.com/cexll/codex-mcp-server) |
 | Minimal `codex exec` wrapper with parallel subagents | [codex-as-mcp](https://github.com/kky42/codex-as-mcp) |
@@ -175,9 +210,6 @@ Codex CLI has minimal startup overhead (<100ms), so wall time is dominated by mo
 | Scenario | Typical time |
 |----------|-------------|
 | Trivial prompt | 9-12s |
-| Quick review, small diff (1KB) | ~20s |
-| Quick review, medium diff (24KB) | ~35s |
-| Quick review, large diff (54KB) | ~40s |
 | Web search | ~17s |
 
 Default timeouts (60-300s) are comfortable for typical workloads.
@@ -190,8 +222,8 @@ Three MCP servers, same architecture, different underlying CLIs. Each wraps a te
 |---|---|---|---|
 | **CLI** | Codex CLI | Claude Code | Gemini CLI |
 | **Provider** | OpenAI | Anthropic | Google |
-| **Tools** | codex, review, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping |
-| **Agentic review** | Codex explores repo in full-auto mode | Claude explores repo with Read/Grep/Glob/git | Gemini explores repo with file reads and git |
+| **Tools** | codex, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping, fetchChunk |
+| **Code review** | `codex review` (native) or `codex` tool with caller-supplied prompt | `review` tool with caller-supplied prompt and hardened isolation defaults | `review` tool with caller-supplied prompt and hardened defaults |
 | **Structured output** | Ajv validation | Native `--json-schema` | Ajv validation |
 | **Session resume** | Session IDs with multi-turn | Native `--resume` | Not supported |
 | **Budget caps** | Not supported | Native `--max-budget-usd` | Not supported |
