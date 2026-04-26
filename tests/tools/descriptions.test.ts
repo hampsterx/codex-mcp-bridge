@@ -51,7 +51,7 @@ function extractDescription(toolName: string): string {
 }
 
 describe("tool descriptions", () => {
-  const tools = ["codex", "review", "search", "structured", "listSessions", "ping", "assess"];
+  const tools = ["codex", "search", "structured", "listSessions", "ping"];
 
   for (const tool of tools) {
     it(`${tool} description exists and is non-empty`, () => {
@@ -90,30 +90,6 @@ describe("tool descriptions", () => {
     });
   });
 
-  describe("review", () => {
-    const desc = extractDescription("review");
-
-    it("describes all three depth tiers", () => {
-      expect(desc).toContain("scan");
-      expect(desc).toContain("focused");
-      expect(desc).toContain("deep");
-    });
-
-    it("recommends assess tool", () => {
-      expect(desc).toContain("assess");
-    });
-
-    it("includes prompt tips", () => {
-      expect(desc).toContain("Tips:");
-      expect(desc).toContain("focus");
-      expect(desc).toContain("security");
-    });
-
-    it("warns about focused mode on large diffs", () => {
-      expect(desc).toMatch(/large diff|>1000/i);
-    });
-  });
-
   describe("listSessions", () => {
     const desc = extractDescription("listSessions");
 
@@ -124,25 +100,6 @@ describe("tool descriptions", () => {
 
     it("clarifies no sensitive data", () => {
       expect(desc).toMatch(/no prompts|metadata/i);
-    });
-  });
-
-  describe("assess", () => {
-    const desc = extractDescription("assess");
-
-    it("describes purpose and no-cost nature", () => {
-      expect(desc).toMatch(/no CLI spawn|no model call|no cost/i);
-      expect(desc).toContain("review depth");
-    });
-
-    it("mentions all three depths", () => {
-      expect(desc).toContain("scan");
-      expect(desc).toContain("focused");
-      expect(desc).toContain("deep");
-    });
-
-    it("documents package-manifest promotion rule", () => {
-      expect(desc).toMatch(/package manifest|lockfile/i);
     });
   });
 

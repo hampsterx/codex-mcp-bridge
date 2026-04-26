@@ -5,21 +5,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { executeCodex } from "./tools/codex.js";
-import { executeReview } from "./tools/review.js";
 import { executeSearch } from "./tools/search.js";
 import { executeQuery } from "./tools/query.js";
 import { executePing } from "./tools/ping.js";
 import { executeStructured } from "./tools/structured.js";
-import { executeAssess } from "./tools/assess.js";
 import {
   codexAnnotations,
-  reviewAnnotations,
   searchAnnotations,
   queryAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
-  assessAnnotations,
 } from "./annotations.js";
 import { sessionStore } from "./utils/session.js";
 import { buildMeta } from "./utils/meta.js";
@@ -45,7 +41,6 @@ server.registerTool(
 Capabilities: code generation and refactoring, code analysis and explanation, file reading and modification (when sandbox allows), git operations and terminal commands, multi-turn conversations via sessionId.
 
 When to use a different tool:
-- For code review, use the review tool instead (it runs git diff, explores the repo, and follows imports automatically).
 - For analysis of text you already have (plans, docs, opinions), inline it directly in the prompt rather than passing file paths. The files parameter triggers full file I/O and increases timeout pressure.
 
 Tips:
@@ -64,7 +59,7 @@ Tips:
       model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
       sandbox: z
         .enum(["read-only", "workspace-write", "full-auto"])
-        .optional()
+        .default("read-only")
         .describe("Sandbox level: read-only (default), workspace-write, or full-auto (Codex CLI convenience mode for workspace-write with auto-approve)"),
       sessionId: z
         .string()
@@ -145,126 +140,6 @@ Tips:
           fallbackUsed: result.fallbackUsed,
           sessionId: result.sessionId,
           conversationId: result.conversationId,
-        }),
-      };
-    } catch (e) {
-      const durationMs = Date.now() - startTime;
-      return {
-        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
-        isError: true,
-        _meta: buildMeta({ durationMs }),
-      };
-    } finally {
-      heartbeat.stop();
-    }
-  },
-);
-
-// --- review tool ---
-
-server.registerTool(
-  "review",
-  {
-    title: "Code Review",
-    description: `Repo-aware code review powered by Codex CLI. Returns structured feedback on code changes. Pick a depth via the 'depth' parameter, or call the 'assess' tool first for a zero-cost recommendation.
-
-Depths:
-- scan: diff-only, single-pass, no repo exploration. Fastest, shallowest. ~2 min. Good for sanity checks and trivial diffs.
-- focused: reads the changed files but does not explore beyond them (no imports, no tests, no wider repo). Medium. ~2-5 min. Good for most PR-sized diffs.
-- deep (default): full agentic exploration. Codex runs git diff itself, reads files, follows imports, checks tests, reads project instruction files. Slowest, most thorough. ~3-10 min, scales with diff size. Serena MCP enabled by default for symbol nav.
-
-Tips:
-- Use the 'focus' parameter to direct attention: "security", "performance", "error handling", "testing".
-- Set 'workingDirectory' to the repo you want reviewed (auto-resolves to git root).
-- Default reviews uncommitted changes (staged + unstaged). Use 'base' to review a branch diff (e.g. base: "main").
-- On large diffs (>1000 lines), focused mode attaches a note suggesting depth:"deep" due to context-window pressure.`,
-    inputSchema: {
-      uncommitted: z
-        .boolean()
-        .optional()
-        .describe("Review uncommitted changes (staged + unstaged). Default: true"),
-      base: z
-        .string()
-        .optional()
-        .describe("Base branch/ref to diff against (e.g. 'main'). Overrides uncommitted."),
-      focus: z
-        .string()
-        .optional()
-        .describe("Optional focus area (e.g. 'security', 'performance', 'error handling')"),
-      depth: z
-        .enum(["scan", "focused", "deep"])
-        .optional()
-        .describe(
-          "Review depth: 'scan' (diff-only, fastest), 'focused' (reads changed files only), 'deep' (full agentic exploration, default).",
-        ),
-      quick: z
-        .boolean()
-        .optional()
-        .describe(
-          "DEPRECATED: use `depth` instead. `quick: true` maps to `depth: \"scan\"`; `quick: false` maps to `depth: \"deep\"`. When both are set, `depth` wins.",
-        ),
-      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
-      workingDirectory: z
-        .string()
-        .optional()
-        .describe("Repository directory (auto-resolves to git root)"),
-      timeout: z
-        .number()
-        .int()
-        .positive()
-        .max(1_800_000)
-        .optional()
-        .describe(
-          "Timeout in milliseconds (max 1800000). Defaults scale with depth: scan=120000, focused=120000+15000*files (cap 300000), deep=180000+30000*files (cap 1800000).",
-        ),
-      maxResponseLength: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Soft limit on response length in words"),
-      mcpServers: z
-        .string()
-        .optional()
-        .describe(
-          "MCP servers to enable for this review (CODEX_MCP_SERVERS grammar: comma-separated names, 'inherit', raw TOML, or empty to disable all non-required). Servers marked required=true in config.toml stay enabled regardless of the value. Default per depth: deep='serena', focused='' (disabled), scan='' (disabled).",
-        ),
-    },
-    annotations: reviewAnnotations,
-  },
-  async (input, extra) => {
-    const startTime = Date.now();
-    const heartbeat = maybeStartHeartbeat(
-      extra._meta as { progressToken?: string | number } | undefined,
-      extra.sendNotification as ProgressNotificationSender,
-    );
-    try {
-      const result = await executeReview(input);
-      const durationMs = Date.now() - startTime;
-
-      const meta: string[] = [
-        `Diff source: ${result.diffSource}`,
-        `Mode: ${result.mode}`,
-      ];
-      if (result.base) meta.push(`Base: ${result.base}`);
-      if (result.diffStat) {
-        meta.push(`Diff: ${result.diffStat.files} files (+${result.diffStat.insertions} / -${result.diffStat.deletions})`);
-      }
-      if (result.timeoutScaled) {
-        meta.push(`Timeout: ${result.appliedTimeout / 1000}s (auto-scaled from diff size)`);
-      }
-      if (result.fallbackUsed) meta.push("Note: fallback model used after quota exhaustion");
-      if (result.timedOut) meta.push("(timed out)");
-
-      return {
-        content: [{
-          type: "text" as const,
-          text: `${result.response}\n\n---\n${meta.join("\n")}`,
-        }],
-        _meta: buildMeta({
-          model: result.model,
-          durationMs,
-          fallbackUsed: result.fallbackUsed,
         }),
       };
     } catch (e) {
@@ -590,65 +465,6 @@ server.registerTool(
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
-        _meta: buildMeta({ durationMs }),
-      };
-    } catch (e) {
-      const durationMs = Date.now() - startTime;
-      return {
-        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
-        isError: true,
-        _meta: buildMeta({ durationMs }),
-      };
-    }
-  },
-);
-
-// --- assess tool ---
-
-server.registerTool(
-  "assess",
-  {
-    title: "Diff Assessment",
-    description: `Analyse a git diff and suggest an appropriate review depth. Pure local operation: runs git, classifies the change, returns estimated wall-clock times for each depth. No CLI spawn, no model call, no cost.
-
-Call this before review to pick the right depth for the change:
-- trivial / small diff → depth: "scan"
-- moderate diff touching a handful of files → depth: "focused"
-- large or cross-cutting diff, or any change to package manifests / lockfiles → depth: "deep"
-
-Any change to a package manifest or lockfile (package.json, *.lock, tsconfig.json, go.mod, Cargo.toml, pyproject.toml, requirements*.txt) promotes the classification to complex, whether at the repo root or nested in a monorepo package.
-
-Returns: diffStat, changedFiles, complexity ("trivial" | "moderate" | "complex"), suggestions (scan/focused/deep with estimatedSeconds).
-
-Tips:
-- Default reviews uncommitted changes (staged + unstaged). Pass base to assess a branch diff.
-- Set workingDirectory to the target repo; the tool auto-resolves to the git root.`,
-    inputSchema: {
-      uncommitted: z
-        .boolean()
-        .optional()
-        .describe("Assess uncommitted changes (staged + unstaged). Default: true"),
-      base: z
-        .string()
-        .optional()
-        .describe("Base branch/ref to diff against (e.g. 'main'). Overrides uncommitted."),
-      workingDirectory: z
-        .string()
-        .optional()
-        .describe("Repository directory (auto-resolves to git root)"),
-    },
-    annotations: assessAnnotations,
-  },
-  async (input) => {
-    const startTime = Date.now();
-    try {
-      const result = await executeAssess(input);
-      const durationMs = Date.now() - startTime;
-      return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify(result, null, 2),
-        }],
         _meta: buildMeta({ durationMs }),
       };
     } catch (e) {

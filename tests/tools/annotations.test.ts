@@ -1,22 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   codexAnnotations,
-  reviewAnnotations,
   searchAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
-  assessAnnotations,
 } from "../../src/annotations.js";
 
 const allAnnotations = {
   codex: codexAnnotations,
-  review: reviewAnnotations,
   search: searchAnnotations,
   structured: structuredAnnotations,
   listSessions: listSessionsAnnotations,
   ping: pingAnnotations,
-  assess: assessAnnotations,
 };
 
 const ANNOTATION_KEYS = [
@@ -47,12 +43,6 @@ describe("tool annotations", () => {
     expect(codexAnnotations.idempotentHint).toBe(false);
   });
 
-  it("review is destructive (agentic mode uses full-auto)", () => {
-    expect(reviewAnnotations.readOnlyHint).toBe(false);
-    expect(reviewAnnotations.destructiveHint).toBe(true);
-    expect(reviewAnnotations.idempotentHint).toBe(false);
-  });
-
   it("search is read-only and idempotent", () => {
     expect(searchAnnotations.readOnlyHint).toBe(true);
     expect(searchAnnotations.destructiveHint).toBe(false);
@@ -77,12 +67,5 @@ describe("tool annotations", () => {
     expect(pingAnnotations.destructiveHint).toBe(false);
     expect(pingAnnotations.idempotentHint).toBe(true);
     expect(pingAnnotations.openWorldHint).toBe(false);
-  });
-
-  it("assess is read-only, idempotent, and closed-world (pure-local, no CLI spawn)", () => {
-    expect(assessAnnotations.readOnlyHint).toBe(true);
-    expect(assessAnnotations.destructiveHint).toBe(false);
-    expect(assessAnnotations.idempotentHint).toBe(true);
-    expect(assessAnnotations.openWorldHint).toBe(false);
   });
 });

@@ -131,9 +131,9 @@ export function quoteKey(name: string): string {
 export interface BuildMcpArgsOptions {
   /**
    * Suppress the "refusing to disable required MCP server" warning. Set when
-   * the enable list came from an implicit tool default (e.g. review.ts's
-   * hardcoded `serena`), not from explicit caller input. Keeps the console
-   * quiet for users who never asked for a specific list.
+   * the enable list came from an implicit tool default (e.g. `query.ts`
+   * passing `""` to disable all servers), not from explicit caller input.
+   * Keeps the console quiet for users who never asked for a specific list.
    */
   silent?: boolean;
 }
@@ -146,9 +146,7 @@ export interface BuildMcpArgsOptions {
  *     happens to be `enabled = false` in `config.toml` is still turned on.
  *     Without this, the bridge's only lever is the disable path and a user
  *     who asked `CODEX_MCP_SERVERS=serena` on a config where `serena.enabled
- *     = false` would end up with serena silently off while `willEnableServer`
- *     reports it as on, picking the serena-aware review prompt for a
- *     subprocess that has no serena tools.
+ *     = false` would end up with serena silently off.
  *   - Every other configured server gets `-c mcp_servers.NAME.enabled=false`,
  *     except `required = true` servers which are always kept enabled
  *     (disabling them would break Codex startup).

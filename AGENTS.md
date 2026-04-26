@@ -6,7 +6,7 @@ This file defines repository-specific operating rules for autonomous or semi-aut
 
 ## Project Overview
 
-Open source MCP server that wraps Codex CLI as a subprocess, exposing code execution, agentic review, web search, and structured output as MCP tools. Works with any MCP-compatible client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code.
+Open source MCP server that wraps Codex CLI as a subprocess, exposing code execution, web search, and structured output as MCP tools. Works with any MCP-compatible client: Claude Code, Gemini CLI, Cursor, Windsurf, VS Code.
 
 - **npm package**: `codex-mcp-bridge`
 - **License**: MIT
@@ -19,14 +19,13 @@ Open source MCP server that wraps Codex CLI as a subprocess, exposing code execu
 MCP Client  --stdio-->  codex-mcp-bridge  --spawn-->  codex CLI subprocess
 ```
 
-Prompts are assembled in TypeScript and spawned via the CLI. The `review`, `search`, and `query` tools load prompt templates from `prompts/*.md` via `src/utils/prompts.ts` and fill placeholders. The `review` tool's agentic mode runs Codex in `--full-auto` inside the target repo, letting it explore files, follow imports, and read project instruction files.
+Prompts are assembled in TypeScript and spawned via the CLI. The `search` and `query` tools load prompt templates from `prompts/*.md` via `src/utils/prompts.ts` and fill placeholders. The `codex` tool is fully caller-driven: callers pass any prompt and pick the sandbox level. For code review, callers either invoke `codex review` directly or pass a review prompt to the `codex` tool with `sandbox: "read-only"` (see [README § Code review with this CLI](README.md#code-review-with-this-cli) and [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md)).
 
 ## Tools
 
 | Tool | Purpose | Default Timeout |
 |------|---------|----------------|
 | `codex` | Execute prompts with file context, session resume, sandbox control | 60s |
-| `review` | Agentic repo-aware code review (Codex explores repo in full-auto) | 300s (agentic) / 120s (quick) |
 | `search` | Web search via `codex --search` | 120s |
 | `query` | Lightweight text analysis (no repo context, no sessions) | 60s |
 | `structured` | JSON Schema validated output (Ajv) | 60s |
@@ -36,15 +35,6 @@ Prompts are assembled in TypeScript and spawned via the CLI. The `review`, `sear
 ### Codex Tool Details
 
 Supports session resume via `sessionId`. Pass `resetSession: true` to discard an existing session and start fresh. Use `listSessions` to inspect active sessions before resuming.
-
-### Review Tool Details
-
-Two modes:
-
-- **Agentic (default)**: Codex CLI runs in `--full-auto` mode inside the repo. It runs `git diff`, reads full files, follows imports, checks tests, and reads project instruction files before reviewing.
-- **Quick** (`quick: true`): Sends only the diff text. Single-pass, no repo exploration.
-
-Optional `focus` parameter directs attention (e.g. "security", "performance", "error handling").
 
 ### Query Tool Details
 
@@ -72,7 +62,6 @@ MCP servers are long-lived processes. After rebuilding, use the smoke test to ca
 ```bash
 npm run smoke                          # codex tool, cwd
 npm run smoke -- codex /path/to/repo   # codex with specific workingDirectory
-npm run smoke -- review ~/NUI/cream    # review tool against another repo
 npm run smoke -- search                # web search
 npm run smoke -- query                 # lightweight query
 npm run smoke -- ping                  # health check
@@ -81,7 +70,7 @@ npm run smoke -- ping                  # health check
 ## Key Design Decisions
 
 ### Progress Heartbeats
-Codex, review, and search handlers emit MCP `notifications/progress` every 15s
+Codex, search, and query handlers emit MCP `notifications/progress` every 15s
 during subprocess execution when the client provides a `progressToken` in `_meta`.
 Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progress.ts`.
 
@@ -136,9 +125,9 @@ the Codex subprocess. Branches evaluated top-to-bottom:
    other configured server gets disabled (except required ones). Unknowns
    warn to stderr once and are dropped.
 
-Per-tool defaults: `review` agentic mode defaults to `serena` (symbol nav
-during review). Pass the `mcpServers` tool param to override; explicit param
-wins over env var wins over tool default.
+Per-tool defaults: all tools currently use disable-all. The `codex` tool
+inherits from the `CODEX_MCP_SERVERS` env var; explicit caller params win
+over env var wins over tool default.
 
 The `required` flag (codex PR #10902) is read straight from `config.toml`
 and cannot be disabled by any caller. Parsed synchronously, no per-spawn

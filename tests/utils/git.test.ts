@@ -276,7 +276,7 @@ describe("getDiffFiles", () => {
     expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 
-  it("accepts ancestry syntax (HEAD~2, main^) for parity with review", () => {
+  it("accepts ancestry syntax (HEAD~2, main^)", () => {
     execFileSyncMock.mockReturnValue("");
     getDiffFiles("/repo", { type: "branch", base: "HEAD~2" });
     getDiffFiles("/repo", { type: "branch", base: "main^" });

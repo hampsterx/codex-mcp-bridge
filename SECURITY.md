@@ -55,8 +55,8 @@ The `codex` tool exposes Codex CLI's sandbox levels as a parameter:
 
 | Mode | Description |
 |------|-------------|
-| `read-only` | No file writes (default for `query`) |
+| `read-only` | No file writes (default; recommended for code review) |
 | `workspace-write` | Writes only within working directory |
-| `full-auto` | Full file system access (default for `review` agentic mode) |
+| `full-auto` | Full file system access (opt in only when callers need it) |
 
-The `review` tool's agentic mode runs in `full-auto` to allow Codex to explore the repo freely. The `query` tool runs in a temporary directory with `read-only` and `--skip-git-repo-check` for maximum isolation.
+The `query` tool runs in a temporary directory with `read-only` and `--skip-git-repo-check` for maximum isolation.

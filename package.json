@@ -1,8 +1,8 @@
 {
   "name": "codex-mcp-bridge",
   "mcpName": "io.github.hampsterx/codex-mcp-bridge",
-  "version": "0.5.1",
-  "description": "MCP server that wraps Codex CLI for code execution, review, search, and structured output",
+  "version": "0.6.0",
+  "description": "MCP server that wraps Codex CLI for code execution, web search, and structured output",
   "author": "hampsterx",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,6 @@
     "codex-cli",
     "openai",
     "claude-code",
-    "code-review",
     "ai-tools",
     "model-context-protocol"
   ],
