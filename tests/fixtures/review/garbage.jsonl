@@ -1,0 +1,6 @@
+not json at all
+{"type":"thread.started","thread_id":"019d5a9f-9999-8888-7777-0123456789ab"}
+{"type":"unknown.future","payload":{"ok":true}}
+{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"Recovered final message."}}
+{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"echo token=abc12345678901234567890","aggregated_output":"AKIA1234567890ABCDEF"}}
+{ definitely not json }

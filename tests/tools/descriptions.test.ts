@@ -51,7 +51,7 @@ function extractDescription(toolName: string): string {
 }
 
 describe("tool descriptions", () => {
-  const tools = ["codex", "search", "structured", "listSessions", "ping"];
+  const tools = ["codex", "search", "query", "review", "structured", "listSessions", "ping"];
 
   for (const tool of tools) {
     it(`${tool} description exists and is non-empty`, () => {

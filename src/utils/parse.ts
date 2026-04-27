@@ -16,6 +16,7 @@ export interface CodexOutput {
 const SECRET_PATTERNS = [
   /sk-[a-zA-Z0-9_-]{20,}/g,           // OpenAI API keys
   /sk-ant-api[a-zA-Z0-9_-]{20,}/g,    // Anthropic API keys
+  /AKIA[0-9A-Z]{16}/g,                 // AWS access key IDs
   /Bearer\s+[a-zA-Z0-9._-]{20,}/gi,   // Bearer tokens
   /token[=:]\s*["']?[a-zA-Z0-9._-]{20,}["']?/gi,  // Generic tokens
 ];

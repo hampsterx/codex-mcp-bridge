@@ -184,6 +184,10 @@ describe("redactSecrets", () => {
     expect(redactSecrets("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6")).toContain("[REDACTED]");
   });
 
+  it("redacts AWS access key IDs", () => {
+    expect(redactSecrets("AKIA1234567890ABCDEF")).toBe("[REDACTED]");
+  });
+
   it("leaves non-secret text alone", () => {
     const text = "This is a normal response";
     expect(redactSecrets(text)).toBe(text);

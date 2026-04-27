@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"019d5a9f-aaaa-bbbb-cccc-0123456789ab"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"git diff main...HEAD","aggregated_output":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6-secret-token-value","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"reason_1","type":"reasoning","summary":["Checked changed files","Focused on production failures"]}}
+{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"No blocking findings."}}
+{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}

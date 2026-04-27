@@ -59,4 +59,4 @@ The `codex` tool exposes Codex CLI's sandbox levels as a parameter:
 | `workspace-write` | Writes only within working directory |
 | `full-auto` | Full file system access (opt in only when callers need it) |
 
-The `query` tool runs in a temporary directory with `read-only` and `--skip-git-repo-check` for maximum isolation.
+The `query` tool runs in a temporary directory with `read-only` and `--skip-git-repo-check` for maximum isolation. The `review` tool runs Codex's native `exec review` subcommand in the caller-specified repository with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, and `--full-auto`; it does not accept a prompt from the caller.

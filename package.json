@@ -1,7 +1,7 @@
 {
   "name": "codex-mcp-bridge",
   "mcpName": "io.github.hampsterx/codex-mcp-bridge",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "MCP server that wraps Codex CLI for code execution, web search, and structured output",
   "author": "hampsterx",
   "license": "MIT",

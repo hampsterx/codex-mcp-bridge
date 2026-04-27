@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.hampsterx/codex-mcp-bridge",
-  "description": "Wraps Codex CLI as MCP tools: codex, query, search, structured, ping, listSessions.",
+  "description": "Wraps Codex CLI as MCP tools: codex, review, query, search, structured, ping, listSessions.",
   "repository": {
     "url": "https://github.com/hampsterx/codex-mcp-bridge",
     "source": "github"
   },
-  "version": "0.6.0",
+  "version": "0.7.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "codex-mcp-bridge",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       },

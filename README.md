@@ -97,7 +97,8 @@ Add to your MCP settings:
 
 | Tool | Description |
 |------|-------------|
-| **codex** | Execute prompts with file context, session resume, and sandbox control. Multi-turn conversations via session IDs. For code review, use `sandbox: "read-only"` with a caller-supplied review prompt; see [Code review with this CLI](#code-review-with-this-cli). |
+| **codex** | Execute prompts with file context, session resume, and sandbox control. Multi-turn conversations via session IDs. Use for free-form review prompts; see [Code review with this CLI](#code-review-with-this-cli). |
+| **review** | Native diff-aware Codex review via `codex exec review --json`. No caller prompt; supports uncommitted, base branch, and commit review modes. |
 | **search** | Web search via `codex --search`. Returns synthesized answers with source URLs. |
 | **query** | Lightweight text analysis. No repo context, no sessions. Runs in an isolated temp directory. |
 | **structured** | JSON Schema validated output via [Ajv](https://ajv.js.org/). Data extraction, classification, or any task needing machine-parseable output. |
@@ -122,6 +123,12 @@ Lightweight, non-agentic text analysis. Spawns in an isolated temp directory so 
 
 Key parameters: `prompt` (required), `context`, `model`, `reasoningEffort`, `timeout` (default 60s).
 
+### review
+
+Thin wrapper around Codex CLI's native diff-aware review. The bridge passes the diff selector to `codex exec review --json`; upstream Codex owns the review prompt. Requires a real git repository via `workingDirectory`.
+
+Key parameters: `mode` (required: `uncommitted`, `base`, or `commit`), `workingDirectory` (required), `base` (required for `base` mode), `commit` (required for `commit` mode), `title`, `model`, `timeout` (default 180s).
+
 ### structured
 
 Embeds a JSON Schema in the prompt and validates the response with Ajv. Returns clean JSON on success, validation errors on failure.
@@ -136,7 +143,7 @@ All tools attach execution metadata (`_meta`) with `durationMs`, `model`, `fallb
 
 ## Code review with this CLI
 
-This bridge does not bundle reviewer prompts. There are two paths for code review:
+This bridge does not bundle reviewer prompts. There are three paths for code review:
 
 ### Native upstream `codex review`
 
@@ -146,7 +153,22 @@ codex review --uncommitted
 codex review --base main "Focus on security and error handling"
 ```
 
-Diff-aware review built into Codex CLI. No bridge involvement.
+Diff-aware review built into Codex CLI. No bridge involvement. Use this when your client has shell access.
+
+### Bridge `review` tool for native diff-aware review
+
+```jsonc
+{
+  "tool": "review",
+  "arguments": {
+    "mode": "base",
+    "base": "main",
+    "workingDirectory": "/path/to/worktree"
+  }
+}
+```
+
+The bridge runs `codex exec review --json` from `workingDirectory`, captures the final review text, and returns review metadata such as `threadId`, event counts, and redacted command output. It does not accept a prompt.
 
 ### Bridge `codex` tool with caller-supplied prompt
 
@@ -160,7 +182,7 @@ Diff-aware review built into Codex CLI. No bridge involvement.
 }
 ```
 
-The bridge runs `codex exec --sandbox read-only` with the supplied prompt and returns stdout.
+The bridge runs `codex exec --sandbox read-only` with the supplied prompt and returns stdout. Use this for free-form review prompts or review inputs that are not expressible as `uncommitted`, `base`, or `commit` diff selectors.
 
 ### Representative review prompt
 
@@ -222,8 +244,8 @@ Three MCP servers, same architecture, different underlying CLIs. Each wraps a te
 |---|---|---|---|
 | **CLI** | Codex CLI | Claude Code | Gemini CLI |
 | **Provider** | OpenAI | Anthropic | Google |
-| **Tools** | codex, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping, fetchChunk |
-| **Code review** | `codex review` (native) or `codex` tool with caller-supplied prompt | `review` tool with caller-supplied prompt and hardened isolation defaults | `review` tool with caller-supplied prompt and hardened defaults |
+| **Tools** | codex, review, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping, fetchChunk |
+| **Code review** | `review` tool wrapping native `codex exec review --json`, or `codex` tool with caller-supplied prompt | `review` tool with caller-supplied prompt and hardened isolation defaults | `review` tool with caller-supplied prompt and hardened defaults |
 | **Structured output** | Ajv validation | Native `--json-schema` | Ajv validation |
 | **Session resume** | Session IDs with multi-turn | Native `--resume` | Not supported |
 | **Budget caps** | Not supported | Native `--max-budget-usd` | Not supported |
