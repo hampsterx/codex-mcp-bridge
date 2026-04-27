@@ -14,10 +14,14 @@
  *   node scripts/smoke-test.mjs codex /tmp           # codex tool, /tmp
  *   node scripts/smoke-test.mjs search               # web search
  *   node scripts/smoke-test.mjs query                # lightweight query
+ *   node scripts/smoke-test.mjs review               # native review against temp fixture
  *   node scripts/smoke-test.mjs ping                 # health check
  */
 
-import { homedir } from "os";
+import { execFileSync } from "child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { join } from "path";
 
 const tool = process.argv[2] || "codex";
 const rawDir = process.argv[3] || process.cwd();
@@ -63,6 +67,29 @@ try {
     });
     console.log("response:", result.response.slice(0, 200) + (result.response.length > 200 ? "..." : ""));
     console.log("timedOut:", result.timedOut);
+  } else if (tool === "review") {
+    const { executeReview } = await import("../dist/tools/review.js");
+    const repo = mkdtempSync(join(tmpdir(), "codex-review-smoke-"));
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "codex-review@example.invalid"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Codex Review Smoke"], { cwd: repo });
+      writeFileSync(join(repo, "app.js"), "export function value(input) {\n  return input.value;\n}\n");
+      execFileSync("git", ["add", "app.js"], { cwd: repo });
+      execFileSync("git", ["commit", "-q", "-m", "initial"], { cwd: repo });
+      writeFileSync(join(repo, "app.js"), "export function value(input) {\n  return input.missing.deep;\n}\n");
+      const result = await executeReview({
+        mode: "uncommitted",
+        workingDirectory: repo,
+        timeout: 180_000,
+      });
+      console.log("response:", result.response.slice(0, 200) + (result.response.length > 200 ? "..." : ""));
+      console.log("threadId:", result.threadId);
+      console.log("commands:", result.meta.commands.length);
+      console.log("timedOut:", result.timedOut);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   } else if (tool === "ping") {
     const { executePing } = await import("../dist/tools/ping.js");
     const result = await executePing();
@@ -95,7 +122,7 @@ try {
       console.log(`  ${sessionId}: turns=${entry.turnCount}, model=${entry.model ?? "unknown"}, created=${new Date(entry.createdAt).toISOString()}`);
     }
   } else {
-    console.error(`Unknown tool: ${tool}. Use: codex, search, query, ping, structured, listSessions`);
+    console.error(`Unknown tool: ${tool}. Use: codex, search, query, review, ping, structured, listSessions`);
     process.exit(1);
   }
 

@@ -49,6 +49,14 @@ export const queryAnnotations: ToolAnnotations = {
   openWorldHint: true,
 };
 
+export const reviewAnnotations: ToolAnnotations = {
+  title: "Native Code Review",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
 export const pingAnnotations: ToolAnnotations = {
   title: "Health Check",
   readOnlyHint: true,

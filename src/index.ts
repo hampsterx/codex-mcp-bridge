@@ -7,12 +7,14 @@ import { z } from "zod";
 import { executeCodex } from "./tools/codex.js";
 import { executeSearch } from "./tools/search.js";
 import { executeQuery } from "./tools/query.js";
+import { executeReview } from "./tools/review.js";
 import { executePing } from "./tools/ping.js";
 import { executeStructured } from "./tools/structured.js";
 import {
   codexAnnotations,
   searchAnnotations,
   queryAnnotations,
+  reviewAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
@@ -304,6 +306,104 @@ Tips:
           durationMs,
           fallbackUsed: result.fallbackUsed,
         }),
+      };
+    } catch (e) {
+      const durationMs = Date.now() - startTime;
+      return {
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
+        isError: true,
+        _meta: buildMeta({ durationMs }),
+      };
+    } finally {
+      heartbeat.stop();
+    }
+  },
+);
+
+// --- review tool ---
+
+server.registerTool(
+  "review",
+  {
+    title: "Native Code Review",
+    description: `Run Codex CLI's native diff-aware review via codex exec review --json. The bridge does not accept or bundle a review prompt; upstream Codex owns the reviewer instructions.
+
+Use for MCP clients that cannot run shell commands but need native Codex review of uncommitted changes, a base branch diff, or a single commit.
+
+Tips:
+- Set workingDirectory to the target git repository.
+- Choose mode "uncommitted", "base", or "commit".
+- Use the codex tool with sandbox "read-only" for free-form review prompts.`,
+    inputSchema: {
+      mode: z
+        .enum(["uncommitted", "base", "commit"])
+        .describe("Diff selector: uncommitted changes, changes against a base branch, or one commit"),
+      base: z
+        .string()
+        .optional()
+        .describe('Base branch or ref. Required when mode is "base".'),
+      commit: z
+        .string()
+        .optional()
+        .describe('Commit SHA or ref. Required when mode is "commit".'),
+      title: z
+        .string()
+        .optional()
+        .describe("Optional commit title to display in the review summary"),
+      model: z.string().optional().describe("Model to use (e.g. o3, gpt-4.1)"),
+      workingDirectory: z
+        .string()
+        .describe("Target git repository directory for native review"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Timeout in milliseconds (default: 180000, max: 600000)"),
+    },
+    annotations: reviewAnnotations,
+  },
+  async (input, extra) => {
+    const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
+    try {
+      const result = await executeReview(input);
+      const durationMs = Date.now() - startTime;
+
+      const meta: string[] = [];
+      if (result.timedOut) meta.push("(timed out)");
+      if (result.fallbackUsed) {
+        meta.push(`Note: ${result.model ?? "fallback model"} used after quota exhaustion`);
+      } else if (result.model) {
+        meta.push(`Model: ${result.model}`);
+      }
+      if (result.threadId) meta.push(`Thread: ${result.threadId}`);
+      if (result.meta.parseFailures > 0) {
+        meta.push(`Parse failures: ${result.meta.parseFailures}`);
+      }
+
+      const text = meta.length > 0
+        ? `${result.response}\n\n---\n${meta.join("\n")}`
+        : result.response;
+
+      return {
+        content: [{ type: "text" as const, text }],
+        _meta: {
+          ...buildMeta({
+            model: result.model,
+            durationMs,
+            fallbackUsed: result.fallbackUsed,
+          }),
+          mode: result.mode,
+          eventCounts: result.meta.eventCounts,
+          parseFailures: result.meta.parseFailures,
+          commands: result.meta.commands,
+          threadId: result.threadId,
+        },
       };
     } catch (e) {
       const durationMs = Date.now() - startTime;

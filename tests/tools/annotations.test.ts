@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   codexAnnotations,
   searchAnnotations,
+  queryAnnotations,
+  reviewAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
   pingAnnotations,
@@ -10,6 +12,8 @@ import {
 const allAnnotations = {
   codex: codexAnnotations,
   search: searchAnnotations,
+  query: queryAnnotations,
+  review: reviewAnnotations,
   structured: structuredAnnotations,
   listSessions: listSessionsAnnotations,
   ping: pingAnnotations,
@@ -47,6 +51,18 @@ describe("tool annotations", () => {
     expect(searchAnnotations.readOnlyHint).toBe(true);
     expect(searchAnnotations.destructiveHint).toBe(false);
     expect(searchAnnotations.idempotentHint).toBe(true);
+  });
+
+  it("query is read-only but not idempotent", () => {
+    expect(queryAnnotations.readOnlyHint).toBe(true);
+    expect(queryAnnotations.destructiveHint).toBe(false);
+    expect(queryAnnotations.idempotentHint).toBe(false);
+  });
+
+  it("review is marked destructive because it invokes Codex full-auto", () => {
+    expect(reviewAnnotations.readOnlyHint).toBe(false);
+    expect(reviewAnnotations.destructiveHint).toBe(true);
+    expect(reviewAnnotations.idempotentHint).toBe(false);
   });
 
   it("structured is read-only but not idempotent", () => {

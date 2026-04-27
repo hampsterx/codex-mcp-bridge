@@ -8,9 +8,9 @@ Architecture and implementation details for codex-mcp-bridge.
 MCP Client  --stdio-->  codex-mcp-bridge  --spawn-->  codex CLI subprocess
 ```
 
-The bridge assembles prompts in TypeScript and spawns the Codex CLI as a subprocess. The `codex` tool can run in `read-only`, `workspace-write`, or `full-auto` sandbox modes; the other tools spawn into isolated read-only contexts. The bridge captures output, parses it, and returns structured MCP responses.
+The bridge assembles prompts in TypeScript and spawns the Codex CLI as a subprocess. The `codex` tool can run in `read-only`, `workspace-write`, or `full-auto` sandbox modes; the other prompt-driven tools spawn into isolated read-only contexts. The bridge captures output, parses it, and returns structured MCP responses.
 
-For code review the bridge has no opinion on prompt content: callers either invoke `codex review` directly, or pass a review prompt to the `codex` tool with `sandbox: "read-only"`. See [README § Code review with this CLI](README.md#code-review-with-this-cli) and [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md).
+For code review the bridge has no opinion on prompt content. MCP-only clients can use the `review` tool, which wraps upstream `codex exec review --json` without accepting a prompt. Free-form review still goes through the `codex` tool with `sandbox: "read-only"` and a caller-supplied prompt. See [README § Code review with this CLI](README.md#code-review-with-this-cli) and [ADR-001](docs/decisions/001-remove-review-and-assess-tools.md).
 
 ## Subprocess Spawning
 
@@ -62,6 +62,9 @@ All tools attach an `_meta` object to the MCP `CallToolResult`:
 | `fallbackUsed` | boolean | Tools that run Codex CLI |
 | `sessionId` | string | `codex` tool only |
 | `conversationId` | string | `codex` tool only |
+| `threadId` | string | `review` tool only |
+| `eventCounts` | object | `review` tool only |
+| `commands` | array | `review` tool only, redacted |
 
 ## MCP Annotations
 
@@ -72,15 +75,16 @@ All tools declare [MCP tool annotations](https://modelcontextprotocol.io/specifi
 | codex | false | true | true |
 | search | true | false | true |
 | query | true | false | true |
+| review | false | true | true |
 | structured | true | false | true |
 | ping | true | false | false |
 | listSessions | true | false | false |
 
-The `codex` tool is marked destructive because its `workspace-write` and `full-auto` sandbox modes can write files. Most tools are `openWorldHint: true` since they spawn a CLI that can access files and network.
+The `codex` tool is marked destructive because its `workspace-write` and `full-auto` sandbox modes can write files. The `review` tool is also marked destructive because it invokes Codex's native review with `--full-auto` so the non-interactive subprocess can inspect diffs. Most tools are `openWorldHint: true` since they spawn a CLI that can access files and network.
 
 ## Progress Notifications
 
-The `codex`, `search`, and `query` tools emit MCP `notifications/progress` every 15 seconds when the client provides a `progressToken` in the request's `_meta`. Heartbeats include elapsed time. Notifications are fire-and-forget; clients that don't support progress notifications are unaffected.
+The `codex`, `search`, `query`, and `review` tools emit MCP `notifications/progress` every 15 seconds when the client provides a `progressToken` in the request's `_meta`. Heartbeats include elapsed time. Notifications are fire-and-forget; clients that don't support progress notifications are unaffected.
 
 Implemented in `src/utils/progress.ts`.
 
