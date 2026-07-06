@@ -25,6 +25,12 @@ export interface ReviewMeta {
   turnsCompleted: number;
   commands: ReviewCommand[];
   reasoningSummaries: string[];
+  /**
+   * Set when a fatal Codex event (`turn.failed` or a top-level `error`) is seen.
+   * `parseReviewStream` stays non-throwing; the review tool reads this and
+   * surfaces the failure as an MCP error instead of returning partial output.
+   */
+  fatalError?: string;
 }
 
 export interface ReviewParseResult {
@@ -62,6 +68,31 @@ export function parseReviewStream(stdout: string): ReviewParseResult {
       meta.parseFailures++;
       rawFallbackLines.push(rawLine);
       continue;
+    }
+
+    // Classify fatal and error-shaped events before extractFallbackText so a
+    // top-level `error` is not mined as review text via its `message` field.
+    //
+    // Only `turn.failed` is a reliable fatal signal. Codex emits a top-level
+    // `error` event for transient stream retries too (e.g. "Reconnecting...
+    // 1/5", a ServerNotification::Error with will_retry) and keeps the stream
+    // running, so treating `error` as fatal would abort a review that recovers.
+    // A genuine failure always terminates in `turn.failed`, whose message
+    // carries the last critical error. Count `error` so the stream is still
+    // recognized as events, but do not mine it as review text or fail on it.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const eventType = (parsed as Record<string, unknown>).type;
+      if (eventType === "turn.failed") {
+        meta.eventCounts["turn.failed"] = (meta.eventCounts["turn.failed"] ?? 0) + 1;
+        meta.fatalError =
+          extractFatalMessage(parsed as ReviewEvent) ??
+          "Codex review turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.";
+        continue;
+      }
+      if (eventType === "error") {
+        meta.eventCounts["error"] = (meta.eventCounts["error"] ?? 0) + 1;
+        continue;
+      }
     }
 
     const fallback = extractFallbackText(parsed);
@@ -158,6 +189,27 @@ function extractReasoningSummaries(item: Record<string, unknown>): string[] {
     }
   }
   return summaries;
+}
+
+/**
+ * Extract the failure message from a `turn.failed` event
+ * (`{ type: "turn.failed", error: { message } }`). Returns undefined when no
+ * usable detail is present (caller supplies a generic actionable fallback).
+ */
+function extractFatalMessage(event: ReviewEvent): string | undefined {
+  // Some shapes carry the detail at the top level: { message }
+  if (typeof event.message === "string" && event.message.trim()) {
+    return sanitize(event.message.trim());
+  }
+  // turn.failed: { type: "turn.failed", error: { message } }
+  const err = event.error;
+  if (err && typeof err === "object" && !Array.isArray(err)) {
+    const msg = (err as Record<string, unknown>).message;
+    if (typeof msg === "string" && msg.trim()) {
+      return sanitize(msg.trim());
+    }
+  }
+  return undefined;
 }
 
 function sanitize(text: string): string {

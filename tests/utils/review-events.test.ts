@@ -82,4 +82,55 @@ describe("parseReviewStream", () => {
     expect(result.finalText).toBe("JSON review output");
     expect(result.meta.parseFailures).toBe(0);
   });
+
+  it("does not treat a top-level error event as fatal (transient stream retry) and never mines it as text", () => {
+    // Codex emits a top-level `error` event for transient reconnects and keeps
+    // the stream running, so a recovered review must still return its real body.
+    const result = parseReviewStream(
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+        JSON.stringify({ type: "error", message: "Reconnecting... 1/5 (Idle timeout waiting for SSE)" }),
+        JSON.stringify({ type: "item.completed", item: { id: "m", type: "agent_message", text: "Actual review body" } }),
+        JSON.stringify({ type: "turn.completed", usage: {} }),
+      ].join("\n"),
+    );
+    expect(result.meta.fatalError).toBeUndefined();
+    expect(result.meta.eventCounts["error"]).toBe(1);
+    // The reconnect notice must not be surfaced as the review.
+    expect(result.finalText).toBe("Actual review body");
+  });
+
+  it("captures turn.failed with a nested error message as fatal", () => {
+    const result = parseReviewStream(
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+        JSON.stringify({ type: "turn.failed", error: { message: "rate limit exceeded" } }),
+      ].join("\n"),
+    );
+    expect(result.meta.fatalError).toBe("rate limit exceeded");
+    expect(result.meta.eventCounts["turn.failed"]).toBe(1);
+  });
+
+  it("uses an actionable fallback when turn.failed carries no message", () => {
+    const result = parseReviewStream(JSON.stringify({ type: "turn.failed" }));
+    expect(result.meta.fatalError).toMatch(/Codex review turn failed/);
+  });
+
+  it("records a fatal failure even after a partial agent_message (tool layer decides)", () => {
+    const result = parseReviewStream(
+      [
+        JSON.stringify({ type: "item.completed", item: { id: "m", type: "agent_message", text: "partial finding" } }),
+        JSON.stringify({ type: "turn.failed", error: { message: "context length exceeded" } }),
+      ].join("\n"),
+    );
+    expect(result.meta.fatalError).toBe("context length exceeded");
+    // parseReviewStream stays non-throwing; finalText is preserved for the
+    // caller to override.
+    expect(result.finalText).toBe("partial finding");
+  });
+
+  it("does not set fatalError on a clean review", () => {
+    const result = parseReviewStream(fixture("base"));
+    expect(result.meta.fatalError).toBeUndefined();
+  });
 });
