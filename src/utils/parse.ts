@@ -112,6 +112,12 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
 /**
  * Try to parse JSONL events from Codex CLI --json output.
  * Looks for thread.started (thread_id) and item.completed agent messages.
+ *
+ * Fatal failures (`turn.failed`, top-level `error`) are surfaced by throwing:
+ * the tool handlers in index.ts map a thrown error to an MCP `isError: true`
+ * result, so a rate-limited, model-errored, or tool-crashed turn reaches the
+ * caller as a real failure instead of an empty-but-OK response. Non-fatal
+ * item-level errors (`item.type === "error"`) are left as successful runs.
  */
 function tryParseJsonlEvents(text: string): CodexOutput | null {
   const lines = text.split("\n").filter(Boolean);
@@ -120,6 +126,8 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
   let threadId: string | undefined;
   const responseParts: string[] = [];
   let hasKnownEvents = false;
+  let fatalMessage: string | undefined;
+  let hasFatalFailure = false;
 
   for (const line of lines) {
     try {
@@ -143,12 +151,44 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
       if (event.type === "turn.completed") {
         hasKnownEvents = true;
       }
+
+      // Fatal: the whole turn errored. Shape: { type: "turn.failed", error: { message } }
+      if (event.type === "turn.failed") {
+        hasKnownEvents = true;
+        hasFatalFailure = true;
+        const error = event.error;
+        if (error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string") {
+          fatalMessage = (error as Record<string, unknown>).message as string;
+        }
+      }
+
+      // Fatal: unrecoverable stream error. Shape: { type: "error", message }
+      if (event.type === "error") {
+        hasKnownEvents = true;
+        hasFatalFailure = true;
+        if (typeof event.message === "string") {
+          fatalMessage = event.message;
+        }
+      }
     } catch {
       // Not JSON, skip line
     }
   }
 
   if (!hasKnownEvents) return null;
+
+  // A fatal failure must not reach the caller as a successful empty response.
+  // Throw so the tool handler surfaces it as an MCP error (isError: true).
+  // Keep the exact upstream detail when present; make the detail-less fallback
+  // actionable so a bare failure still tells the caller what to check.
+  if (hasFatalFailure) {
+    const detail = fatalMessage?.trim();
+    throw new Error(
+      detail
+        ? detail
+        : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.",
+    );
+  }
 
   const response = responseParts.join("\n\n") || "(no response content in JSONL events)";
   return { response, threadId, raw: lines };
