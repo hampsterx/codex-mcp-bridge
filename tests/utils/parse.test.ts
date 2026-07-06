@@ -123,6 +123,64 @@ describe("parseCodexOutput", () => {
     expect(result.response).toContain(line2);
     expect(result.threadId).toBeUndefined();
   });
+
+  it("throws with the message when a turn.failed event is present", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_fail" }),
+      JSON.stringify({ type: "turn.failed", error: { message: "rate limit exceeded" } }),
+    ].join("\n");
+    // A failed turn must surface as an error, not an empty successful response.
+    expect(() => parseCodexOutput(events, "")).toThrow("rate limit exceeded");
+  });
+
+  it("throws a generic message when turn.failed has no error message", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_fail" }),
+      JSON.stringify({ type: "turn.failed" }),
+    ].join("\n");
+    expect(() => parseCodexOutput(events, "")).toThrow("Codex turn failed");
+  });
+
+  it("throws with the message for a top-level error event", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_err" }),
+      JSON.stringify({ type: "error", message: "unrecoverable stream error" }),
+    ].join("\n");
+    expect(() => parseCodexOutput(events, "")).toThrow("unrecoverable stream error");
+  });
+
+  it("does not throw on a non-fatal item-level error, returns the agent text", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_item_err" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "error", message: "a recoverable tool error" },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_1", type: "agent_message", text: "Recovered and finished" },
+      }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.response).toBe("Recovered and finished");
+    expect(result.threadId).toBe("thread_item_err");
+  });
+
+  it("throws the failure when turn.failed follows a partial agent_message (fatal wins)", () => {
+    // Contract: a fatal turn.failed discards any partial agent text and surfaces
+    // the failure, rather than returning the partial text as a success.
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_partial_fail" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "partial work before failure" },
+      }),
+      JSON.stringify({ type: "turn.failed", error: { message: "context length exceeded" } }),
+    ].join("\n");
+    expect(() => parseCodexOutput(events, "")).toThrow("context length exceeded");
+    expect(() => parseCodexOutput(events, "")).not.toThrow("partial work before failure");
+  });
 });
 
 describe("parseCodexOutput edge cases", () => {
