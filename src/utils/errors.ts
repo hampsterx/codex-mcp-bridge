@@ -1,27 +1,49 @@
+import { extractFatalMessageFromJsonl } from "./parse.js";
+
+/** Free-text rate-limit / quota patterns, shared by stderr and stdout-fatal classification. */
+const RETRYABLE_TEXT_PATTERNS = ["rate limit", "too many requests", "429", "quota", "resource_exhausted", "rate_limit_exceeded"];
+
+/** Does this text name a rate-limit / quota condition? */
+function matchesRetryableText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return RETRYABLE_TEXT_PATTERNS.some((p) => lower.includes(p));
+}
+
 /**
  * Non-throwing check: does this result look like a retryable quota/rate-limit error?
  * Used by the fallback wrapper to decide whether to retry with a different model.
  * Must be called BEFORE checkErrorPatterns (which throws).
+ *
+ * Two failure surfaces are classified:
+ *   - stderr text / structured JSON on a non-zero exit (the original path).
+ *   - a `turn.failed` / terminal `error` event on stdout JSONL with a rate-limit
+ *     message and exit 0 (since #31/#33, Codex can report a rate-limited turn
+ *     this way with clean stderr). Only the same rate-limit/quota subset retries;
+ *     other fatals (context length, tool crash) fall through to parseCodexOutput.
  */
-export function isRetryableError(exitCode: number | null, stderr: string): boolean {
-  if (exitCode === 0 || !stderr) return false;
+export function isRetryableError(exitCode: number | null, stderr: string, stdout?: string): boolean {
+  // stderr classification: a non-zero exit whose stderr names a rate-limit/quota condition.
+  if (exitCode !== 0 && stderr) {
+    if (matchesRetryableText(stderr)) return true;
 
-  const lower = stderr.toLowerCase();
+    // Structured JSON error object on stderr.
+    try {
+      const parsed = JSON.parse(stderr) as Record<string, unknown>;
+      const error = (parsed.error ?? parsed) as Record<string, unknown>;
+      const code = String(error.code ?? "").toUpperCase();
+      const status = String(error.status ?? "").toUpperCase();
+      const retryableCodes = ["RESOURCE_EXHAUSTED", "QUOTA_EXCEEDED", "429", "RATE_LIMIT_EXCEEDED"];
+      if (retryableCodes.includes(code) || retryableCodes.includes(status)) return true;
+    } catch {
+      // Not JSON, already checked free-text above
+    }
+  }
 
-  // Free-text pattern matching
-  const textPatterns = ["rate limit", "too many requests", "429", "quota", "resource_exhausted", "rate_limit_exceeded"];
-  if (textPatterns.some((p) => lower.includes(p))) return true;
-
-  // Structured JSON matching
-  try {
-    const parsed = JSON.parse(stderr) as Record<string, unknown>;
-    const error = (parsed.error ?? parsed) as Record<string, unknown>;
-    const code = String(error.code ?? "").toUpperCase();
-    const status = String(error.status ?? "").toUpperCase();
-    const retryableCodes = ["RESOURCE_EXHAUSTED", "QUOTA_EXCEEDED", "429", "RATE_LIMIT_EXCEEDED"];
-    if (retryableCodes.includes(code) || retryableCodes.includes(status)) return true;
-  } catch {
-    // Not JSON, already checked free-text above
+  // stdout JSONL classification: match the same patterns against the extracted
+  // fatal message so a rate-limited turn reported on stdout (exit 0) still retries.
+  if (stdout) {
+    const fatal = extractFatalMessageFromJsonl(stdout);
+    if (fatal && matchesRetryableText(fatal)) return true;
   }
 
   return false;

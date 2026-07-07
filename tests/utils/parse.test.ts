@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCodexOutput, extractJson, redactSecrets } from "../../src/utils/parse.js";
+import { parseCodexOutput, extractJson, redactSecrets, extractFatalMessageFromJsonl } from "../../src/utils/parse.js";
 
 describe("parseCodexOutput", () => {
   it("parses plain text from stdout", () => {
@@ -232,6 +232,87 @@ describe("parseCodexOutput edge cases", () => {
     const result = parseCodexOutput(stdoutEvents, stderrEvents);
     expect(result.threadId).toBe("stdout_thread");
     expect(result.response).toBe("From stdout");
+  });
+});
+
+describe("extractFatalMessageFromJsonl", () => {
+  it("returns the turn.failed error message", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "turn.failed", error: { message: "rate limit exceeded" } }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBe("rate limit exceeded");
+  });
+
+  it("returns the terminal top-level error message", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "error", message: "unrecoverable stream error" }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBe("unrecoverable stream error");
+  });
+
+  it("returns undefined for a happy stream", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "all good" } }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBeUndefined();
+  });
+
+  it("returns undefined for a non-fatal item-level error", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "item.completed", item: { id: "i0", type: "error", message: "a recoverable tool error" } }),
+      JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: "recovered" } }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBeUndefined();
+  });
+
+  it("returns undefined for a recovered transient top-level error", () => {
+    // error followed by agent output + turn.completed => transient, not fatal.
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "error", message: "Reconnecting... 1/5" }),
+      JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "recovered" } }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBeUndefined();
+  });
+
+  it("returns undefined for a detail-less turn.failed (no message to match)", () => {
+    // The generic 'no detail' fallback text is left to the throwing path so it
+    // never leaks the word 'quota' into rate-limit classification.
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "turn.failed" }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBeUndefined();
+  });
+
+  it("returns undefined for a turn.failed whose error object lacks a message", () => {
+    // Distinct branch from the detail-less case above: error is present as an
+    // object but carries no `message` string (e.g. only a code).
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "t" }),
+      JSON.stringify({ type: "turn.failed", error: { code: "X" } }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBeUndefined();
+  });
+
+  it("returns the turn.failed message even after partial agent output (fatal wins)", () => {
+    const events = [
+      JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "partial" } }),
+      JSON.stringify({ type: "turn.failed", error: { message: "context length exceeded" } }),
+    ].join("\n");
+    expect(extractFatalMessageFromJsonl(events)).toBe("context length exceeded");
+  });
+
+  it("returns undefined for non-JSONL / empty text", () => {
+    expect(extractFatalMessageFromJsonl("just plain text")).toBeUndefined();
+    expect(extractFatalMessageFromJsonl("")).toBeUndefined();
   });
 });
 

@@ -110,6 +110,115 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
 }
 
 /**
+ * Result of scanning Codex --json (JSONL) output for the events that matter to
+ * both the parsing path (`tryParseJsonlEvents`) and the retry classifier
+ * (`extractFatalMessageFromJsonl`). One scan, one place the classification rules
+ * live, so the two consumers can never drift apart.
+ */
+interface JsonlScan {
+  /** True once any recognized Codex event type is seen. */
+  hasKnownEvents: boolean;
+  /** thread_id from `thread.started`, for session resume. */
+  threadId?: string;
+  /** Agent text collected from `item.completed` agent_message items, in order. */
+  responseParts: string[];
+  /** A `turn.failed` event was seen (always fatal). */
+  hasFatalFailure: boolean;
+  /** `turn.failed` -> `error.message`, when present. */
+  fatalMessage?: string;
+  /** Last top-level `error` event message (fatal only when the turn never recovers). */
+  lastErrorMessage?: string;
+  /** A `turn.completed` event was seen (marks recovery for the terminal-error gate). */
+  sawTurnCompleted: boolean;
+  /** Non-empty input lines, retained for the parsed `raw` payload. */
+  lines: string[];
+}
+
+/**
+ * Scan JSONL event lines once and collect the classification signals both
+ * consumers need. Non-JSON lines are skipped. This owns the event-shape rules
+ * (which `type`s count, where the fatal message lives, what marks recovery);
+ * the consumers only decide what to DO with the result (throw vs return).
+ */
+function scanJsonlEvents(text: string): JsonlScan {
+  const lines = text.split("\n").filter(Boolean);
+  const scan: JsonlScan = {
+    hasKnownEvents: false,
+    responseParts: [],
+    hasFatalFailure: false,
+    sawTurnCompleted: false,
+    lines,
+  };
+
+  for (const line of lines) {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      // Not JSON, skip line
+      continue;
+    }
+
+    // Only claim this as JSONL if we see known Codex event types
+    if (event.type === "thread.started" && typeof event.thread_id === "string") {
+      scan.hasKnownEvents = true;
+      scan.threadId = event.thread_id;
+    }
+
+    // Current CLI emits the final agent text on item.completed
+    if (event.type === "item.completed" && event.item && typeof event.item === "object") {
+      scan.hasKnownEvents = true;
+      const item = event.item as Record<string, unknown>;
+      if (item.type === "agent_message" && typeof item.text === "string") {
+        scan.responseParts.push(item.text);
+      }
+    }
+
+    if (event.type === "turn.completed") {
+      scan.hasKnownEvents = true;
+      scan.sawTurnCompleted = true;
+    }
+
+    // Fatal: the whole turn errored. Shape: { type: "turn.failed", error: { message } }
+    if (event.type === "turn.failed") {
+      scan.hasKnownEvents = true;
+      scan.hasFatalFailure = true;
+      const error = event.error;
+      if (error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string") {
+        scan.fatalMessage = (error as Record<string, unknown>).message as string;
+      }
+    }
+
+    // A top-level `error` event is NOT inherently fatal: Codex emits it for
+    // transient stream retries ("Reconnecting... N/5", a
+    // ServerNotification::Error with will_retry) and keeps the stream running,
+    // so failing on it would abort a turn that recovers. Recognize it as a
+    // known event and remember its message, but only surface it as a failure
+    // if the turn never recovers (terminal-error gate in the consumers). A
+    // recovered turn produces agent output and/or turn.completed; a genuine
+    // unrecovered failure usually terminates in turn.failed.
+    if (event.type === "error") {
+      scan.hasKnownEvents = true;
+      if (typeof event.message === "string") {
+        scan.lastErrorMessage = event.message;
+      }
+    }
+  }
+
+  return scan;
+}
+
+/**
+ * A terminal top-level `error` event is fatal only when the turn never
+ * recovered: no agent output and no `turn.completed`. A transient reconnect
+ * recovers and is filtered out here because it yields responseParts and/or a
+ * turn.completed. Shared by both consumers so the gate stays identical.
+ */
+function isUnrecoveredTerminalError(scan: JsonlScan): boolean {
+  return Boolean(scan.lastErrorMessage) && scan.responseParts.length === 0 && !scan.sawTurnCompleted;
+}
+
+/**
  * Try to parse JSONL events from Codex CLI --json output.
  * Looks for thread.started (thread_id) and item.completed agent messages.
  *
@@ -117,106 +226,67 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
  * map a thrown error to an MCP `isError: true` result, so a rate-limited,
  * model-errored, or tool-crashed turn reaches the caller as a real failure
  * instead of an empty-but-OK response. A top-level `error` event is treated as
- * fatal only when the turn does not recover (no agent output and no
- * `turn.completed`), because Codex also emits `error` for transient stream
- * retries and keeps running. Non-fatal item-level errors
- * (`item.type === "error"`) are also left as successful runs.
+ * fatal only when the turn does not recover (see isUnrecoveredTerminalError),
+ * because Codex also emits `error` for transient stream retries and keeps
+ * running. Non-fatal item-level errors (`item.type === "error"`) are also left
+ * as successful runs.
  */
 function tryParseJsonlEvents(text: string): CodexOutput | null {
-  const lines = text.split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-
-  let threadId: string | undefined;
-  const responseParts: string[] = [];
-  let hasKnownEvents = false;
-  let fatalMessage: string | undefined;
-  let hasFatalFailure = false;
-  let lastErrorMessage: string | undefined;
-  let sawTurnCompleted = false;
-
-  for (const line of lines) {
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-
-      // Only claim this as JSONL if we see known Codex event types
-      if (event.type === "thread.started" && typeof event.thread_id === "string") {
-        hasKnownEvents = true;
-        threadId = event.thread_id;
-      }
-
-      // Current CLI emits the final agent text on item.completed
-      if (event.type === "item.completed" && event.item && typeof event.item === "object") {
-        hasKnownEvents = true;
-        const item = event.item as Record<string, unknown>;
-        if (item.type === "agent_message" && typeof item.text === "string") {
-          responseParts.push(item.text);
-        }
-      }
-
-      if (event.type === "turn.completed") {
-        hasKnownEvents = true;
-        sawTurnCompleted = true;
-      }
-
-      // Fatal: the whole turn errored. Shape: { type: "turn.failed", error: { message } }
-      if (event.type === "turn.failed") {
-        hasKnownEvents = true;
-        hasFatalFailure = true;
-        const error = event.error;
-        if (error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string") {
-          fatalMessage = (error as Record<string, unknown>).message as string;
-        }
-      }
-
-      // A top-level `error` event is NOT inherently fatal: Codex emits it for
-      // transient stream retries ("Reconnecting... N/5", a
-      // ServerNotification::Error with will_retry) and keeps the stream running,
-      // so failing on it would abort a turn that recovers. Recognize it as a
-      // known event and remember its message, but only surface it as a failure
-      // if the turn never recovers (terminal-error check after the loop). A
-      // recovered turn produces agent output and/or turn.completed; a genuine
-      // unrecovered failure usually terminates in turn.failed.
-      if (event.type === "error") {
-        hasKnownEvents = true;
-        if (typeof event.message === "string") {
-          lastErrorMessage = event.message;
-        }
-      }
-    } catch {
-      // Not JSON, skip line
-    }
-  }
-
-  if (!hasKnownEvents) return null;
+  const scan = scanJsonlEvents(text);
+  if (!scan.hasKnownEvents) return null;
 
   // A fatal failure must not reach the caller as a successful empty response.
   // Throw so the tool handler surfaces it as an MCP error (isError: true).
   // Keep the exact upstream detail when present; make the detail-less fallback
   // actionable so a bare failure still tells the caller what to check.
-  if (hasFatalFailure) {
-    const detail = fatalMessage?.trim();
-    throw new Error(
-      detail
-        ? detail
-        : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.",
-    );
+  if (scan.hasFatalFailure) {
+    throw new Error(fatalDetail(scan.fatalMessage));
   }
 
-  // Terminal top-level error: an `error` event with no recovery (no agent
-  // output and no completed turn) is surfaced rather than returning an empty
-  // "success". A transient reconnect recovers and is filtered out here because
-  // it yields responseParts and/or a turn.completed.
-  if (lastErrorMessage && responseParts.length === 0 && !sawTurnCompleted) {
-    const detail = lastErrorMessage.trim();
-    throw new Error(
-      detail
-        ? detail
-        : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.",
-    );
+  if (isUnrecoveredTerminalError(scan)) {
+    throw new Error(fatalDetail(scan.lastErrorMessage));
   }
 
-  const response = responseParts.join("\n\n") || "(no response content in JSONL events)";
-  return { response, threadId, raw: lines };
+  const response = scan.responseParts.join("\n\n") || "(no response content in JSONL events)";
+  return { response, threadId: scan.threadId, raw: scan.lines };
+}
+
+/** Trim an upstream fatal message, falling back to an actionable default. */
+function fatalDetail(message: string | undefined): string {
+  const detail = message?.trim();
+  return detail ? detail : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.";
+}
+
+/**
+ * Non-throwing fatal-message extractor for Codex --json (JSONL) output.
+ *
+ * Returns the upstream fatal message so a caller (e.g. the model-fallback retry
+ * classifier in errors.ts) can decide whether the failure is retryable WITHOUT
+ * the throwing side-effect that `parseCodexOutput` / `tryParseJsonlEvents`
+ * carry. Shares `scanJsonlEvents` with the throwing path, so the classification
+ * (which fatals count, the terminal-error recovery gate) can never drift; the
+ * only difference is that this consumer returns the message instead of throwing.
+ *
+ *   - `turn.failed` -> its `error.message` (a turn.failed is always fatal).
+ *   - a top-level `error` event -> its `message`, but only when the turn never
+ *     recovered (see isUnrecoveredTerminalError).
+ *
+ * Returns undefined for a happy stream, a non-fatal item-level error, a
+ * recovered transient error, or a fatal event that carried no message string
+ * (there is nothing to pattern-match; the generic "no detail" fallback text is
+ * left to the throwing path so it never leaks into rate-limit classification).
+ */
+export function extractFatalMessageFromJsonl(text: string): string | undefined {
+  const scan = scanJsonlEvents(text);
+
+  // A turn.failed is always fatal; return its upstream message (or undefined if
+  // it was detail-less). It takes precedence over the top-level error path,
+  // matching tryParseJsonlEvents' short-circuit on hasFatalFailure.
+  if (scan.hasFatalFailure) return scan.fatalMessage;
+
+  if (isUnrecoveredTerminalError(scan)) return scan.lastErrorMessage;
+
+  return undefined;
 }
 
 /**
