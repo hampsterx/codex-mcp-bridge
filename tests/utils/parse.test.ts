@@ -141,12 +141,42 @@ describe("parseCodexOutput", () => {
     expect(() => parseCodexOutput(events, "")).toThrow("Codex turn failed");
   });
 
-  it("throws with the message for a top-level error event", () => {
+  it("does not treat a top-level error event as fatal (transient reconnect) and recovers the response", () => {
+    // Codex emits a top-level `error` event for transient stream retries and
+    // keeps running, so a recovered turn must still return its real text.
     const events = [
-      JSON.stringify({ type: "thread.started", thread_id: "thread_err" }),
+      JSON.stringify({ type: "thread.started", thread_id: "thread_reconnect" }),
+      JSON.stringify({ type: "error", message: "Reconnecting... 1/5 (Idle timeout waiting for SSE)" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Recovered answer" },
+      }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.response).toBe("Recovered answer");
+    expect(result.threadId).toBe("thread_reconnect");
+  });
+
+  it("throws a terminal top-level error when the turn never recovers", () => {
+    // No agent output and no turn.completed after the error: treat it as fatal
+    // rather than returning an empty "success".
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_terminal" }),
       JSON.stringify({ type: "error", message: "unrecoverable stream error" }),
     ].join("\n");
     expect(() => parseCodexOutput(events, "")).toThrow("unrecoverable stream error");
+  });
+
+  it("does not throw when a turn completes after a top-level error but yields no text", () => {
+    // A completed (if empty) turn means the earlier error was transient.
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_empty_ok" }),
+      JSON.stringify({ type: "error", message: "Reconnecting... 1/5" }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.response).toBe("(no response content in JSONL events)");
   });
 
   it("does not throw on a non-fatal item-level error, returns the agent text", () => {

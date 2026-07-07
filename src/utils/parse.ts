@@ -113,11 +113,14 @@ export function parseCodexOutput(stdout: string, stderr: string): CodexOutput {
  * Try to parse JSONL events from Codex CLI --json output.
  * Looks for thread.started (thread_id) and item.completed agent messages.
  *
- * Fatal failures (`turn.failed`, top-level `error`) are surfaced by throwing:
- * the tool handlers in index.ts map a thrown error to an MCP `isError: true`
- * result, so a rate-limited, model-errored, or tool-crashed turn reaches the
- * caller as a real failure instead of an empty-but-OK response. Non-fatal
- * item-level errors (`item.type === "error"`) are left as successful runs.
+ * A fatal `turn.failed` is surfaced by throwing: the tool handlers in index.ts
+ * map a thrown error to an MCP `isError: true` result, so a rate-limited,
+ * model-errored, or tool-crashed turn reaches the caller as a real failure
+ * instead of an empty-but-OK response. A top-level `error` event is treated as
+ * fatal only when the turn does not recover (no agent output and no
+ * `turn.completed`), because Codex also emits `error` for transient stream
+ * retries and keeps running. Non-fatal item-level errors
+ * (`item.type === "error"`) are also left as successful runs.
  */
 function tryParseJsonlEvents(text: string): CodexOutput | null {
   const lines = text.split("\n").filter(Boolean);
@@ -128,6 +131,8 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
   let hasKnownEvents = false;
   let fatalMessage: string | undefined;
   let hasFatalFailure = false;
+  let lastErrorMessage: string | undefined;
+  let sawTurnCompleted = false;
 
   for (const line of lines) {
     try {
@@ -150,6 +155,7 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
 
       if (event.type === "turn.completed") {
         hasKnownEvents = true;
+        sawTurnCompleted = true;
       }
 
       // Fatal: the whole turn errored. Shape: { type: "turn.failed", error: { message } }
@@ -162,12 +168,18 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
         }
       }
 
-      // Fatal: unrecoverable stream error. Shape: { type: "error", message }
+      // A top-level `error` event is NOT inherently fatal: Codex emits it for
+      // transient stream retries ("Reconnecting... N/5", a
+      // ServerNotification::Error with will_retry) and keeps the stream running,
+      // so failing on it would abort a turn that recovers. Recognize it as a
+      // known event and remember its message, but only surface it as a failure
+      // if the turn never recovers (terminal-error check after the loop). A
+      // recovered turn produces agent output and/or turn.completed; a genuine
+      // unrecovered failure usually terminates in turn.failed.
       if (event.type === "error") {
         hasKnownEvents = true;
-        hasFatalFailure = true;
         if (typeof event.message === "string") {
-          fatalMessage = event.message;
+          lastErrorMessage = event.message;
         }
       }
     } catch {
@@ -183,6 +195,19 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
   // actionable so a bare failure still tells the caller what to check.
   if (hasFatalFailure) {
     const detail = fatalMessage?.trim();
+    throw new Error(
+      detail
+        ? detail
+        : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.",
+    );
+  }
+
+  // Terminal top-level error: an `error` event with no recovery (no agent
+  // output and no completed turn) is surfaced rather than returning an empty
+  // "success". A transient reconnect recovers and is filtered out here because
+  // it yields responseParts and/or a turn.completed.
+  if (lastErrorMessage && responseParts.length === 0 && !sawTurnCompleted) {
+    const detail = lastErrorMessage.trim();
     throw new Error(
       detail
         ? detail

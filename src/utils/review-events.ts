@@ -26,9 +26,10 @@ export interface ReviewMeta {
   commands: ReviewCommand[];
   reasoningSummaries: string[];
   /**
-   * Set when a fatal Codex event (`turn.failed` or a top-level `error`) is seen.
-   * `parseReviewStream` stays non-throwing; the review tool reads this and
-   * surfaces the failure as an MCP error instead of returning partial output.
+   * Set when a fatal `turn.failed` event is seen. `parseReviewStream` stays
+   * non-throwing; the review tool reads this and surfaces the failure as an MCP
+   * error instead of returning partial output. (Top-level `error` events are
+   * transient stream retries, not fatal.)
    */
   fatalError?: string;
 }
