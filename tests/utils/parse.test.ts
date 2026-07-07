@@ -197,6 +197,88 @@ describe("parseCodexOutput", () => {
     expect(result.threadId).toBe("thread_item_err");
   });
 
+  it("maps turn.completed usage to a camelCase usage object", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_usage" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Answer" },
+      }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: {
+          input_tokens: 1200,
+          cached_input_tokens: 800,
+          output_tokens: 350,
+          reasoning_output_tokens: 128,
+        },
+      }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.usage).toEqual({
+      inputTokens: 1200,
+      cachedInputTokens: 800,
+      outputTokens: 350,
+      reasoningTokens: 128,
+    });
+  });
+
+  it("accumulates usage across multiple turn.completed events", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_multi_turn" }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 100, cached_input_tokens: 10, output_tokens: 20, reasoning_output_tokens: 5 },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Answer" },
+      }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 200, cached_input_tokens: 30, output_tokens: 40, reasoning_output_tokens: 7 },
+      }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.usage).toEqual({
+      inputTokens: 300,
+      cachedInputTokens: 40,
+      outputTokens: 60,
+      reasoningTokens: 12,
+    });
+  });
+
+  it("leaves usage undefined when no turn.completed carries a usage payload", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_no_usage" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Answer" },
+      }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.usage).toBeUndefined();
+  });
+
+  it("defaults missing usage fields to zero rather than dropping them", () => {
+    const events = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_partial_usage" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "item_0", type: "agent_message", text: "Answer" },
+      }),
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 42 } }),
+    ].join("\n");
+    const result = parseCodexOutput(events, "");
+    expect(result.usage).toEqual({
+      inputTokens: 42,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    });
+  });
+
   it("throws the failure when turn.failed follows a partial agent_message (fatal wins)", () => {
     // Contract: a fatal turn.failed discards any partial agent text and surfaces
     // the failure, rather than returning the partial text as a success.

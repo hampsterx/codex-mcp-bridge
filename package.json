@@ -1,7 +1,7 @@
 {
   "name": "codex-mcp-bridge",
   "mcpName": "io.github.hampsterx/codex-mcp-bridge",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "MCP server that wraps Codex CLI for code execution, web search, and structured output",
   "author": "hampsterx",
   "license": "MIT",
@@ -25,7 +25,8 @@
     "test:watch": "vitest",
     "test:integration": "CODEX_INTEGRATION=1 vitest run tests/integration/",
     "smoke": "node scripts/smoke-test.mjs",
-    "prepublishOnly": "npm run build"
+    "check-changelog": "node scripts/check-changelog.mjs",
+    "prepublishOnly": "node scripts/check-changelog.mjs && npm run build"
   },
   "keywords": [
     "mcp",

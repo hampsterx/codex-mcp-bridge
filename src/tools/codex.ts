@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnCodex } from "../utils/spawn.js";
-import { parseCodexOutput } from "../utils/parse.js";
+import { parseCodexOutput, type CodexUsage } from "../utils/parse.js";
 import { checkErrorPatterns } from "../utils/errors.js";
 import {
   readFiles,
@@ -37,6 +37,7 @@ export interface CodexResult {
   fallbackUsed?: boolean;
   sessionId?: string;
   conversationId?: string;
+  usage?: CodexUsage;
   filesIncluded: string[];
   filesSkipped: string[];
   imagesIncluded: string[];
@@ -205,6 +206,7 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
       fallbackUsed: fallbackUsed || undefined,
       sessionId: outputSessionId,
       conversationId: validatedThreadId,
+      usage: parsed.usage,
       filesIncluded: includedFiles,
       filesSkipped: skippedFiles,
       imagesIncluded: imageNames,

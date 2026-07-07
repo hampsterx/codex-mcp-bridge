@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-09
+
+### Added
+
+- **Token usage in `_meta`**: `codex` and `query` responses now carry
+  `_meta.usage` with per-turn token counts
+  (`inputTokens`, `cachedInputTokens`, `outputTokens`, `reasoningTokens`)
+  read from the Codex exec `turn.completed` event. Orchestrating agents get
+  token accounting for free. The field is absent (not zeroed) when the stream
+  emits no usage. Dollar cost is still not reported: Codex exec emits token
+  counts but not cost.
+- **Release-coherence CI guard**: `scripts/check-changelog.mjs` fails when the
+  release is not coherent: `package.json`'s `version` has no matching
+  `## [x.y.z]` heading in `CHANGELOG.md`, or `server.json` / `package-lock.json`
+  disagree with that version (a stale `server.json` breaks the MCP Registry
+  publish). Wired into CI (runs on every PR) and `prepublishOnly` so neither a
+  missing changelog section nor a version-file drift can ship.
+
 ### Fixed
 
 - **Model fallback now catches rate limits reported on stdout.** When Codex
@@ -14,6 +32,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   with the configured fallback model instead of surfacing an MCP error. Only the
   rate-limit/quota subset retries; other fatals (context length, tool crash)
   still surface. Covers `codex`, `query`, `search`, `structured`, and `review`.
+
+## [0.7.0] - 2026-04-28
+
+### Added
+
+- **`review` tool**: native diff-aware code review via
+  `codex exec review --json`. The bridge owns no reviewer prompt; upstream
+  Codex supplies the review instructions. Three diff selectors: `uncommitted`
+  (working-tree changes), `base` (diff against a base branch/ref), and
+  `commit` (a single commit). For MCP clients that cannot shell out but need
+  native Codex review. `_meta` reports the review `mode`, per-type
+  `eventCounts`, `parseFailures`, executed `commands`, and `threadId`.
+  See PR #30.
 
 ## [0.6.0] - 2026-04-26
 

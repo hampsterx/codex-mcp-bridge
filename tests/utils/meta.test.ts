@@ -64,4 +64,20 @@ describe("buildMeta", () => {
     const meta = buildMeta({ durationMs: 100 });
     expect(meta).not.toHaveProperty("model");
   });
+
+  it("includes usage when provided", () => {
+    const usage = {
+      inputTokens: 100,
+      cachedInputTokens: 40,
+      outputTokens: 25,
+      reasoningTokens: 8,
+    };
+    const meta = buildMeta({ durationMs: 300, usage });
+    expect(meta.usage).toEqual(usage);
+  });
+
+  it("omits usage when not provided", () => {
+    const meta = buildMeta({ durationMs: 100 });
+    expect(meta).not.toHaveProperty("usage");
+  });
 });
