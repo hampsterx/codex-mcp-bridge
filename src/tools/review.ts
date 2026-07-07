@@ -86,6 +86,13 @@ export async function executeReview(input: ReviewInput): Promise<ReviewResult> {
       return buildReviewResult(input.mode, finalText, parsed.meta, actualModel, fallbackUsed, true);
     }
 
+    // A fatal Codex event (turn.failed / top-level error) surfaces as an MCP
+    // error rather than returning partial or empty output as a successful
+    // review. Codex can exit 0 on a failed turn, so this cannot rely on exitCode.
+    if (parsed.meta.fatalError) {
+      throw new Error(parsed.meta.fatalError);
+    }
+
     checkErrorPatterns(result.exitCode, result.stderr, finalText ?? undefined);
 
     if (result.exitCode !== 0) {
@@ -190,14 +197,27 @@ function hasReviewEvents(meta: ReviewMeta): boolean {
 
 function parseReviewOutput(stdout: string, stderr: string): ReviewParseResult {
   const stdoutParsed = parseReviewStream(stdout);
-  if (stdoutParsed.finalText || hasReviewEvents(stdoutParsed.meta)) {
-    return stdoutParsed;
-  }
-
   const stderrParsed = parseReviewStream(stderr);
-  if (!stderrParsed.finalText && !hasReviewEvents(stderrParsed.meta)) {
-    return stdoutParsed;
+
+  // Prefer the stdout parse when it carries the review; otherwise fall back to
+  // stderr (older CLI variants), else stdout.
+  const primary =
+    stdoutParsed.finalText || hasReviewEvents(stdoutParsed.meta)
+      ? stdoutParsed
+      : stderrParsed.finalText || hasReviewEvents(stderrParsed.meta)
+        ? stderrParsed
+        : stdoutParsed;
+
+  // A fatal event on the non-selected stream must not be lost. Codex writes
+  // failures to stderr in practice, so a turn.failed there while stdout carried
+  // only progress events would otherwise let the output-file text return as a
+  // successful review.
+  if (!primary.meta.fatalError) {
+    const other = primary === stdoutParsed ? stderrParsed : stdoutParsed;
+    if (other.meta.fatalError) {
+      primary.meta.fatalError = other.meta.fatalError;
+    }
   }
 
-  return stderrParsed;
+  return primary;
 }

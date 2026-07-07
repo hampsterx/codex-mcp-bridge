@@ -227,6 +227,70 @@ describe("executeReview", () => {
   });
 
 
+  it("surfaces a fatal turn.failed event as an error", async () => {
+    spawnCodexMock.mockResolvedValue({
+      stdout: [
+        JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+        JSON.stringify({ type: "turn.failed", error: { message: "rate limit exceeded" } }),
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    await expect(executeReview({
+      mode: "uncommitted",
+      workingDirectory,
+    })).rejects.toThrow("rate limit exceeded");
+  });
+
+  it("recovers a review that emits a transient top-level error (reconnect) then completes", async () => {
+    // A top-level `error` event is a transient stream retry, not a failure. The
+    // review must still return its body rather than aborting.
+    spawnCodexMock.mockResolvedValue({
+      stdout: [
+        JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+        JSON.stringify({ type: "error", message: "Reconnecting... 1/5 (Idle timeout waiting for SSE)" }),
+        JSON.stringify({ type: "item.completed", item: { id: "m", type: "agent_message", text: "Recovered review body" } }),
+        JSON.stringify({ type: "turn.completed", usage: {} }),
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    const result = await executeReview({
+      mode: "uncommitted",
+      workingDirectory,
+    });
+
+    expect(result.response).toBe("Recovered review body");
+  });
+
+  it("surfaces a fatal stderr event even when stdout carried progress and an output file exists", async () => {
+    // stdout has only progress events, stderr carries the real failure, and the
+    // -o output file has partial text. Without the fatal-merge this returns the
+    // partial text as a successful review.
+    spawnCodexMock.mockImplementation(async ({ args }) => {
+      const outputIndex = args.indexOf("-o");
+      await writeFile(args[outputIndex + 1]!, "partial review text before failure", "utf8");
+      return {
+        stdout: [
+          JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+          JSON.stringify({ type: "turn.started" }),
+        ].join("\n"),
+        stderr: JSON.stringify({ type: "turn.failed", error: { message: "context length exceeded" } }),
+        exitCode: 0,
+        timedOut: false,
+      };
+    });
+
+    await expect(executeReview({
+      mode: "uncommitted",
+      workingDirectory,
+    })).rejects.toThrow("context length exceeded");
+  });
+
   it("redacts command metadata from parsed events", async () => {
     spawnCodexMock.mockResolvedValue({
       stdout: fixture("garbage"),
