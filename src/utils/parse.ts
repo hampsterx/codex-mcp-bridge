@@ -1,10 +1,20 @@
 import stripAnsi from "strip-ansi";
 
+/** Per-turn token usage reported by Codex exec on `turn.completed`. */
+export interface CodexUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
 export interface CodexOutput {
   /** The main text response from Codex. */
   response: string;
   /** Extracted thread/conversation ID for session resume. */
   threadId?: string;
+  /** Per-turn token usage, when the stream includes a `turn.completed`. */
+  usage?: CodexUsage;
   /** Raw parsed JSON (full structure from CLI). */
   raw?: unknown;
 }
@@ -130,6 +140,8 @@ interface JsonlScan {
   lastErrorMessage?: string;
   /** A `turn.completed` event was seen (marks recovery for the terminal-error gate). */
   sawTurnCompleted: boolean;
+  /** Accumulated per-turn token usage across all `turn.completed` events. */
+  usage?: CodexUsage;
   /** Non-empty input lines, retained for the parsed `raw` payload. */
   lines: string[];
 }
@@ -177,6 +189,12 @@ function scanJsonlEvents(text: string): JsonlScan {
     if (event.type === "turn.completed") {
       scan.hasKnownEvents = true;
       scan.sawTurnCompleted = true;
+      // Usage is documented as per-turn (codex-rs Usage: "tokens used during
+      // the turn"). A single `codex exec` is one turn, but accumulate across
+      // any turn.completed events so a multi-turn stream reports the true total
+      // rather than only the last turn.
+      const parsedUsage = extractUsage(event.usage);
+      if (parsedUsage) scan.usage = addUsage(scan.usage, parsedUsage);
     }
 
     // Fatal: the whole turn errored. Shape: { type: "turn.failed", error: { message } }
@@ -248,13 +266,45 @@ function tryParseJsonlEvents(text: string): CodexOutput | null {
   }
 
   const response = scan.responseParts.join("\n\n") || "(no response content in JSONL events)";
-  return { response, threadId: scan.threadId, raw: scan.lines };
+  return { response, threadId: scan.threadId, usage: scan.usage, raw: scan.lines };
 }
 
 /** Trim an upstream fatal message, falling back to an actionable default. */
 function fatalDetail(message: string | undefined): string {
   const detail = message?.trim();
   return detail ? detail : "Codex turn failed with no error detail. Check Codex CLI auth, quota, and model, then retry.";
+}
+
+/**
+ * Map a Codex exec `turn.completed` usage payload to a camelCase shape.
+ *
+ * Upstream shape (codex-rs/exec/src/exec_events.rs `Usage`, all i64):
+ *   { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens }
+ *
+ * Returns undefined when the payload is absent or not an object, so callers
+ * can distinguish "no usage emitted" from a zeroed turn.
+ */
+function extractUsage(raw: unknown): CodexUsage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const u = raw as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    inputTokens: num(u.input_tokens),
+    cachedInputTokens: num(u.cached_input_tokens),
+    outputTokens: num(u.output_tokens),
+    reasoningTokens: num(u.reasoning_output_tokens),
+  };
+}
+
+/** Field-wise sum of two usage snapshots (undefined base returns the addend). */
+function addUsage(base: CodexUsage | undefined, add: CodexUsage): CodexUsage {
+  if (!base) return add;
+  return {
+    inputTokens: base.inputTokens + add.inputTokens,
+    cachedInputTokens: base.cachedInputTokens + add.cachedInputTokens,
+    outputTokens: base.outputTokens + add.outputTokens,
+    reasoningTokens: base.reasoningTokens + add.reasoningTokens,
+  };
 }
 
 /**

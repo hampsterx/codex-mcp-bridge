@@ -142,6 +142,7 @@ Tips:
           fallbackUsed: result.fallbackUsed,
           sessionId: result.sessionId,
           conversationId: result.conversationId,
+          usage: result.usage,
         }),
       };
     } catch (e) {
@@ -305,6 +306,7 @@ Tips:
           model: result.model,
           durationMs,
           fallbackUsed: result.fallbackUsed,
+          usage: result.usage,
         }),
       };
     } catch (e) {

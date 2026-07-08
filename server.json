@@ -6,12 +6,12 @@
     "url": "https://github.com/hampsterx/codex-mcp-bridge",
     "source": "github"
   },
-  "version": "0.7.0",
+  "version": "0.8.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "codex-mcp-bridge",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
       },

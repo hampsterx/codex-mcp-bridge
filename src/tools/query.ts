@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnCodex } from "../utils/spawn.js";
-import { parseCodexOutput } from "../utils/parse.js";
+import { parseCodexOutput, type CodexUsage } from "../utils/parse.js";
 import { checkErrorPatterns } from "../utils/errors.js";
 import { loadPrompt, buildLengthLimit } from "../utils/prompts.js";
 import { resolveModel } from "../utils/model.js";
@@ -22,6 +22,7 @@ export interface QueryResult {
   response: string;
   model?: string;
   fallbackUsed?: boolean;
+  usage?: CodexUsage;
   timedOut: boolean;
 }
 
@@ -86,6 +87,7 @@ export async function executeQuery(input: QueryInput): Promise<QueryResult> {
       response: parsed.response,
       model: fallbackUsed ? fallbackModel : model,
       fallbackUsed: fallbackUsed || undefined,
+      usage: parsed.usage,
       timedOut: false,
     };
   } finally {
