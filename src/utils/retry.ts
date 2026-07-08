@@ -36,8 +36,10 @@ export async function withModelFallback(
     return { result, fallbackUsed: false };
   }
 
-  // Check if this is a retryable quota/rate-limit error
-  if (!isRetryableError(result.exitCode, result.stderr)) {
+  // Check if this is a retryable quota/rate-limit error. Pass stdout too: since
+  // #31/#33 Codex can report a rate-limited turn as a stdout JSONL turn.failed
+  // event with exit 0 and clean stderr, which the stderr-only check would miss.
+  if (!isRetryableError(result.exitCode, result.stderr, result.stdout)) {
     return { result, fallbackUsed: false };
   }
 

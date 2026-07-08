@@ -34,6 +34,51 @@ describe("isRetryableError", () => {
   it("returns false for unrelated errors", () => {
     expect(isRetryableError(1, "file not found")).toBe(false);
   });
+
+  describe("stdout JSONL fatal classification (exit 0)", () => {
+    const turnFailed = (message: string) =>
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "t" }),
+        JSON.stringify({ type: "turn.failed", error: { message } }),
+      ].join("\n");
+
+    it("retries a rate-limit turn.failed reported on stdout with exit 0", () => {
+      expect(isRetryableError(0, "", turnFailed("rate limit exceeded"))).toBe(true);
+    });
+
+    it("retries a terminal top-level error with a rate-limit message on stdout", () => {
+      const events = [
+        JSON.stringify({ type: "thread.started", thread_id: "t" }),
+        JSON.stringify({ type: "error", message: "429 too many requests" }),
+      ].join("\n");
+      expect(isRetryableError(0, "", events)).toBe(true);
+    });
+
+    it("does NOT retry a non-rate-limit turn.failed (context length)", () => {
+      expect(isRetryableError(0, "", turnFailed("context length exceeded"))).toBe(false);
+    });
+
+    it("does NOT retry a happy stdout stream", () => {
+      const events = [
+        JSON.stringify({ type: "thread.started", thread_id: "t" }),
+        JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "ok" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ].join("\n");
+      expect(isRetryableError(0, "", events)).toBe(false);
+    });
+
+    it("does NOT retry a detail-less turn.failed (avoids false 'quota' match)", () => {
+      const events = [
+        JSON.stringify({ type: "thread.started", thread_id: "t" }),
+        JSON.stringify({ type: "turn.failed" }),
+      ].join("\n");
+      expect(isRetryableError(0, "", events)).toBe(false);
+    });
+
+    it("still honors stderr classification when stdout is also passed", () => {
+      expect(isRetryableError(1, "rate limit exceeded", "some stdout")).toBe(true);
+    });
+  });
 });
 
 describe("checkErrorPatterns", () => {

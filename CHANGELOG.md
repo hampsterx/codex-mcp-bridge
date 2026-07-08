@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Model fallback now catches rate limits reported on stdout.** When Codex
+  reports a rate-limited turn as a stdout JSONL `turn.failed` (or terminal
+  `error`) event with exit 0 and clean stderr, `withModelFallback` now retries
+  with the configured fallback model instead of surfacing an MCP error. Only the
+  rate-limit/quota subset retries; other fatals (context length, tool crash)
+  still surface. Covers `codex`, `query`, `search`, `structured`, and `review`.
+
 ## [0.6.0] - 2026-04-26
 
 ### Removed
