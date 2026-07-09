@@ -27,10 +27,11 @@ jobs:
       - run: npm test
       - run: npm run build
       # OIDC trusted publishing requires npm >= 11.5.1. Node 22 ships with
-      # npm 10, so upgrade the global npm before publishing. A global install
-      # resolves npm's full bundled dependency tree; `npx --yes npm@latest`
-      # does a partial install that omits transitive deps like sigstore, which
-      # breaks `publish --provenance` with a MODULE_NOT_FOUND at runtime.
-      - run: npm install -g npm@latest
+      # npm 10, so upgrade the global npm before publishing. Pin to 11.18.0:
+      # npm 12.0.0 (current `latest`) fails `publish --provenance` with
+      # `Cannot find module 'sigstore'` because it no longer hoists sigstore to
+      # npm/node_modules/sigstore, so the libnpmpublish it loads at runtime
+      # can't resolve it. 11.18.0 hoists it correctly and still supports OIDC.
+      - run: npm install -g npm@11.18.0
       - run: npm --version
       - run: npm publish --provenance --access public
