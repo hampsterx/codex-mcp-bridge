@@ -27,8 +27,10 @@ jobs:
       - run: npm test
       - run: npm run build
       # OIDC trusted publishing requires npm >= 11.5.1. Node 22 ships with
-      # npm 10, so run the publish step via npx --yes npm@latest instead of
-      # touching the global install (self-upgrade races; corepack does not
-      # reroute npm without a packageManager field).
-      - run: npx --yes npm@latest --version
-      - run: npx --yes npm@latest publish --provenance --access public
+      # npm 10, so upgrade the global npm before publishing. A global install
+      # resolves npm's full bundled dependency tree; `npx --yes npm@latest`
+      # does a partial install that omits transitive deps like sigstore, which
+      # breaks `publish --provenance` with a MODULE_NOT_FOUND at runtime.
+      - run: npm install -g npm@latest
+      - run: npm --version
+      - run: npm publish --provenance --access public
