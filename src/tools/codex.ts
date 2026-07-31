@@ -54,9 +54,9 @@ const IMAGE_QUERY_TIMEOUT = 120_000;
  * Execute a prompt via Codex CLI with optional session support.
  *
  * Arg assembly per plan:
- *   New:    codex exec --model MODEL --sandbox LEVEL --skip-git-repo-check "prompt"
- *   Resume: codex exec --skip-git-repo-check -c model="MODEL" resume CONVERSATION_ID "prompt"
- *   Auto:   codex exec --model MODEL --full-auto --skip-git-repo-check "prompt"
+ *   New:    codex exec --model MODEL --sandbox LEVEL --skip-git-repo-check -- "prompt"
+ *   Resume: codex exec --sandbox LEVEL --skip-git-repo-check -c model="MODEL" resume CONVERSATION_ID -- "prompt"
+ *   Auto:   codex exec --model MODEL --full-auto --skip-git-repo-check -- "prompt"
  *
  * cwd is set on spawn (not -C flag, which is broken upstream).
  */
@@ -237,16 +237,44 @@ interface BuildArgsInput {
 }
 
 /**
+ * Push the sandbox selector. Every path emits one, including resume: the
+ * resume subcommand otherwise inherits the sandbox from user config and
+ * project trust, which resolves to `workspace-write` inside any trusted
+ * project directory. Emitting the flag keeps a caller's chosen level in force
+ * across every turn.
+ *
+ * The `read-only` default lives here rather than only in the MCP input schema,
+ * so that the safe posture holds for any caller of `buildArgs`, not just
+ * requests that went through zod.
+ *
+ * `--sandbox` and `--full-auto` are parent `exec` flags, so they must be
+ * pushed before the `resume` subcommand, not after.
+ */
+function pushSandbox(args: string[], sandbox: BuildArgsInput["sandbox"]): void {
+  if (sandbox === "full-auto") {
+    // --full-auto implies sandbox, don't combine with --sandbox
+    args.push("--full-auto");
+  } else {
+    args.push("--sandbox", sandbox ?? "read-only");
+  }
+}
+
+/**
  * Build Codex CLI argument array.
  *
  * New conversation:
- *   codex exec --model MODEL --sandbox LEVEL --skip-git-repo-check "prompt"
+ *   codex exec --model MODEL --sandbox LEVEL --skip-git-repo-check -- "prompt"
  *
  * Resume:
- *   codex exec --skip-git-repo-check -c model="MODEL" resume CONVERSATION_ID "prompt"
+ *   codex exec --sandbox LEVEL --skip-git-repo-check -c model="MODEL" resume CONVERSATION_ID -- "prompt"
  *
  * Full auto (agentic):
- *   codex exec --model MODEL --full-auto --skip-git-repo-check "prompt"
+ *   codex exec --model MODEL --full-auto --skip-git-repo-check -- "prompt"
+ *
+ * The `--` separator is required, not cosmetic. Codex parses the trailing
+ * PROMPT positional as options, so a prompt of `--version` prints the CLI
+ * version instead of reaching the model, and `-i/--image` is variadic on
+ * `exec` and otherwise swallows the prompt as another image path.
  */
 export function buildArgs(input: BuildArgsInput): string[] {
   const { model, sandbox, reasoningEffort, conversationId, prompt, outputFile, imagePaths = [] } = input;
@@ -254,18 +282,14 @@ export function buildArgs(input: BuildArgsInput): string[] {
 
   if (conversationId) {
     // Resume path: config flags before subcommand args
+    pushSandbox(args, sandbox);
     args.push("--skip-git-repo-check");
     if (model) args.push("-c", `model="${escapeArg(model)}"`);
     args.push("resume", conversationId);
   } else {
     // New conversation
-    if (model) args.push("--model", model);
-    if (sandbox === "full-auto") {
-      // --full-auto implies sandbox, don't combine with --sandbox
-      args.push("--full-auto");
-    } else if (sandbox) {
-      args.push("--sandbox", sandbox);
-    }
+    if (model) args.push(`--model=${model}`);
+    pushSandbox(args, sandbox);
     args.push("--skip-git-repo-check");
   }
 
@@ -276,7 +300,7 @@ export function buildArgs(input: BuildArgsInput): string[] {
     args.push("-i", imagePath);
   }
 
-  if (prompt) args.push(prompt);
+  if (prompt) args.push("--", prompt);
 
   return args;
 }

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Resumed turns no longer inherit their sandbox from user config.**
+  `codex exec resume` takes its sandbox from user config and project trust when
+  no sandbox flag is given, which resolves to `workspace-write` inside any
+  trusted directory. The resume path emitted no such flag, so a caller
+  requesting `sandbox: "read-only"` got read-only on the first turn and
+  workspace-write on every turn resumed via `sessionId`. Every path now emits a
+  sandbox flag, placed before the `resume` subcommand, and an unspecified
+  sandbox resolves to `read-only` in the argument builder rather than only in
+  the MCP input schema. The level is per request, not sticky: a turn that wants
+  anything above `read-only` states it, and omitting it de-escalates rather
+  than inheriting.
+- **Prompts are no longer parsed as Codex options.** `codex exec` reads its
+  trailing prompt positional as options, so a prompt of `--version` printed the
+  CLI version instead of reaching the model, and a prompt following image paths
+  was consumed as another `-i` value (`--image` is variadic). The `codex` and
+  `structured` tools now pass `--` before the prompt, on both the new and the
+  resume paths. See `SECURITY.md` § Argument Injection for the mechanism,
+  including why this stopped short of code execution and what would have
+  removed that margin.
+- **Review flags accept dash-prefixed values.** `review`'s `base`, `commit`,
+  `title`, and `model` are unconstrained caller strings passed in the
+  `--flag value` form, which Codex rejects outright when the value starts with a
+  dash (`a value is required for '--title <TITLE>'`), failing the whole review.
+  These now use `--flag=value`.
+
 ## [0.8.0] - 2026-07-09
 
 ### Added

@@ -47,8 +47,7 @@ describe("buildReviewArgs", () => {
       "-o",
       "/tmp/review.txt",
       "--uncommitted",
-      "--model",
-      "o3",
+      "--model=o3",
     ]);
   });
 
@@ -68,17 +67,36 @@ describe("buildReviewArgs", () => {
       "--full-auto",
       "-o",
       "/tmp/review.txt",
-      "--base",
-      "main",
-      "--title",
-      "Review title",
+      "--base=main",
+      "--title=Review title",
     ]);
 
     expect(buildReviewArgs({
       mode: "commit",
       commit: "abc123",
       outputFile: "/tmp/review.txt",
-    })).toContain("--commit");
+    })).toContain("--commit=abc123");
+  });
+
+  // In the space form Codex rejects a dash-prefixed value outright ("a value
+  // is required for '--title <TITLE>' but none was supplied"), so a branch or
+  // title starting with a dash fails the whole review. These flags run inside
+  // a hardcoded --full-auto invocation, so keeping each value welded to its
+  // own flag matters more here than anywhere else in the bridge.
+  it("binds dash-prefixed caller values to their own flag", () => {
+    const args = buildReviewArgs({
+      mode: "base",
+      base: "--uncommitted",
+      title: "--dangerously-bypass-approvals-and-sandbox",
+      model: "--full-auto",
+      outputFile: "/tmp/review.txt",
+    });
+
+    expect(args).toContain("--base=--uncommitted");
+    expect(args).toContain("--title=--dangerously-bypass-approvals-and-sandbox");
+    expect(args).toContain("--model=--full-auto");
+    expect(args).not.toContain("--uncommitted");
+    expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
   it("escapes output file path on Windows", () => {
@@ -178,8 +196,7 @@ describe("executeReview", () => {
     });
 
     const call = spawnCodexMock.mock.calls[0]![0];
-    expect(call.args).toContain("--commit");
-    expect(call.args).toContain("abc123");
+    expect(call.args).toContain("--commit=abc123");
     expect(call.timeout).toBe(5000);
     expect(result.response).toContain("[P2]");
     expect(result.mode).toBe("commit");

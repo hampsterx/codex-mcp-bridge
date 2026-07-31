@@ -103,9 +103,12 @@ export async function executeStructured(input: StructuredInput): Promise<Structu
     model,
     (m, t) => {
       const args: string[] = ["exec", ...getMcpServerOverride()];
-      if (m) args.push("--model", m);
+      if (m) args.push(`--model=${m}`);
       args.push("--sandbox", "read-only", "--skip-git-repo-check");
-      if (!useStdin) args.push(fullPrompt);
+      // `--` keeps the prompt a positional. The template prefix makes a
+      // leading dash unreachable today, but the separator removes the
+      // dependency on that rather than relying on it.
+      if (!useStdin) args.push("--", fullPrompt);
       return spawnCodex({ args, cwd, stdin: useStdin ? fullPrompt : undefined, timeout: t });
     },
     effectiveTimeout,

@@ -5,8 +5,13 @@
  * This module stores conversation IDs extracted from CLI output (JSONL events or stderr).
  */
 
-/** Validate a session/conversation ID. */
-const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+/**
+ * Validate a session/conversation ID.
+ *
+ * The first character excludes `-` deliberately: the ID is emitted as the
+ * `resume <id>` positional, and a dash-prefixed value there is read as a flag.
+ */
+const SESSION_ID_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 const MAX_SESSION_ID_LENGTH = 256;
 
 export function isValidSessionId(id: string): boolean {
