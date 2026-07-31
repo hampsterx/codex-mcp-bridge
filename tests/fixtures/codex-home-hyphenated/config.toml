@@ -1,6 +1,6 @@
 [mcp_servers.ck-search]
 command = "ck-mcp"
 
-[mcp_servers.gemini-bridge]
+[mcp_servers.web-fetch]
 command = "node"
-args = ["/opt/gemini-bridge/dist/index.js"]
+args = ["/opt/web-fetch/dist/index.js"]

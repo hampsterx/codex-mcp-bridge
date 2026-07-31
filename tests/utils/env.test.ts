@@ -122,7 +122,7 @@ describe("getMcpServerOverride", () => {
     process.env["CODEX_HOME"] = fixtureHome("codex-home-hyphenated");
     expect(getMcpServerOverride()).toEqual([
       "-c", "mcp_servers.ck-search.enabled=false",
-      "-c", "mcp_servers.gemini-bridge.enabled=false",
+      "-c", "mcp_servers.web-fetch.enabled=false",
     ]);
   });
 

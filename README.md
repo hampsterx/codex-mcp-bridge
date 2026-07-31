@@ -238,25 +238,25 @@ Default timeouts (60-300s) are comfortable for typical workloads.
 
 ## Bridge family
 
-Three MCP servers, same architecture, different underlying CLIs. Each wraps a terminal agent as a subprocess and exposes it as MCP tools. Pick the one that matches your model provider, or run multiple for cross-model workflows.
+Two MCP servers, same architecture, different underlying CLIs. Each wraps a terminal agent as a subprocess and exposes it as MCP tools. Pick the one that matches your model provider, or run both for cross-model workflows.
 
-| | [codex-mcp-bridge](https://github.com/hampsterx/codex-mcp-bridge) | [claude-mcp-bridge](https://github.com/hampsterx/claude-mcp-bridge) | [gemini-mcp-bridge](https://github.com/hampsterx/gemini-mcp-bridge) |
-|---|---|---|---|
-| **CLI** | Codex CLI | Claude Code | Gemini CLI |
-| **Provider** | OpenAI | Anthropic | Google |
-| **Tools** | codex, review, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions | query, review, search, structured, ping, fetchChunk |
-| **Code review** | `review` tool wrapping native `codex exec review --json`, or `codex` tool with caller-supplied prompt | `review` tool with caller-supplied prompt and hardened isolation defaults | `review` tool with caller-supplied prompt and hardened defaults |
-| **Structured output** | Ajv validation | Native `--json-schema` | Ajv validation |
-| **Session resume** | Session IDs with multi-turn | Native `--resume` | Not supported |
-| **Budget caps** | Not supported | Native `--max-budget-usd` | Not supported |
-| **Effort control** | `reasoningEffort` (low/medium/high) | `--effort low/medium/high/max` | Not supported |
-| **Cold start** | <100ms (inference dominates) | ~1-2s | ~16s |
-| **Auth** | `OPENAI_API_KEY` | `claude login` (subscription) or `ANTHROPIC_API_KEY` | `gemini auth login` |
-| **Cost** | Pay-per-token | Subscription (included) or API credits | Free tier available |
-| **Concurrency** | 3 (configurable) | 3 (configurable) | 3 (configurable) |
-| **Model fallback** | Auto-retry with fallback model | Auto-retry with fallback model | Auto-retry with fallback model |
+| | [codex-mcp-bridge](https://github.com/hampsterx/codex-mcp-bridge) | [claude-mcp-bridge](https://github.com/hampsterx/claude-mcp-bridge) |
+|---|---|---|
+| **CLI** | Codex CLI | Claude Code |
+| **Provider** | OpenAI | Anthropic |
+| **Tools** | codex, review, search, query, structured, ping, listSessions | query, review, search, structured, ping, listSessions |
+| **Code review** | `review` tool wrapping native `codex exec review --json`, or `codex` tool with caller-supplied prompt | `review` tool with caller-supplied prompt and hardened isolation defaults |
+| **Structured output** | Ajv validation | Native `--json-schema` |
+| **Session resume** | Session IDs with multi-turn | Native `--resume` |
+| **Budget caps** | Not supported | Native `--max-budget-usd` |
+| **Effort control** | `reasoningEffort` (low/medium/high) | `--effort low/medium/high/max` |
+| **Cold start** | <100ms (inference dominates) | ~1-2s |
+| **Auth** | `OPENAI_API_KEY` | `claude login` (subscription) or `ANTHROPIC_API_KEY` |
+| **Cost** | Pay-per-token | Subscription (included) or API credits |
+| **Concurrency** | 3 (configurable) | 3 (configurable) |
+| **Model fallback** | Auto-retry with fallback model | Auto-retry with fallback model |
 
-All three share: subprocess env isolation, path sandboxing, FIFO concurrency queue, MCP tool annotations, `_meta` response metadata, progress heartbeats. The codex and claude bridges also perform output redaction (secret stripping).
+Both share: subprocess env isolation, path sandboxing, output redaction (secret stripping), FIFO concurrency queue, MCP tool annotations, `_meta` response metadata, progress heartbeats.
 
 ## Development
 
