@@ -52,7 +52,7 @@ describe("readCodexConfig", () => {
 
   it("parses hyphenated server names", () => {
     const config = readCodexConfig(fixture("codex-home-hyphenated"));
-    expect(Object.keys(config?.mcp_servers ?? {}).sort()).toEqual(["ck-search", "gemini-bridge"]);
+    expect(Object.keys(config?.mcp_servers ?? {}).sort()).toEqual(["ck-search", "web-fetch"]);
   });
 
   it("parses quoted TOML keys with dots", () => {
@@ -82,7 +82,7 @@ describe("listMcpServerNames", () => {
 
   it("handles hyphenated names", () => {
     const config = readCodexConfig(fixture("codex-home-hyphenated"));
-    expect(listMcpServerNames(config)).toEqual(["ck-search", "gemini-bridge"]);
+    expect(listMcpServerNames(config)).toEqual(["ck-search", "web-fetch"]);
   });
 
   it("handles quoted keys", () => {
