@@ -287,7 +287,15 @@ export function buildArgs(input: BuildArgsInput): string[] {
     if (model) args.push("-c", `model="${escapeArg(model)}"`);
     args.push("resume", conversationId);
   } else {
-    // New conversation
+    // New conversation.
+    //
+    // No `escapeArg` here, deliberately, and the asymmetry with the resume
+    // path above is the point. `escapeArg` escapes cmd.exe metacharacters
+    // (`%` -> `%%`, `"` -> `""`), which only means anything where the value is
+    // re-parsed after argv, i.e. inside the quoted TOML string of a
+    // `-c key="value"` token. This is a bare argv token passed under
+    // `shell: false`, so nothing un-escapes it, and applying the escaper would
+    // corrupt any model id containing `%` or `"`.
     if (model) args.push(`--model=${model}`);
     pushSandbox(args, sandbox);
     args.push("--skip-git-repo-check");
