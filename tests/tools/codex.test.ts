@@ -40,8 +40,7 @@ describe("buildArgs", () => {
     })).toEqual([
       "exec",
       "--json",
-      "--model",
-      "o3",
+      "--model=o3",
       "--sandbox",
       "read-only",
       "--skip-git-repo-check",
@@ -55,8 +54,7 @@ describe("buildArgs", () => {
     })).toEqual([
       "exec",
       "--json",
-      "--model",
-      "o3",
+      "--model=o3",
       "--full-auto",
       "--skip-git-repo-check",
     ]);
@@ -65,11 +63,14 @@ describe("buildArgs", () => {
   it("builds resume args with config overrides", () => {
     expect(buildArgs({
       model: "o3",
+      sandbox: "read-only",
       reasoningEffort: "high",
       conversationId: "thread_abc",
     })).toEqual([
       "exec",
       "--json",
+      "--sandbox",
+      "read-only",
       "--skip-git-repo-check",
       "-c",
       "model=\"o3\"",
@@ -89,8 +90,9 @@ describe("buildArgs", () => {
     })).toEqual([
       "exec",
       "--json",
-      "--model",
-      "o3",
+      "--model=o3",
+      "--sandbox",
+      "read-only",
       "--skip-git-repo-check",
       "-o",
       "/tmp/response.txt",
@@ -98,8 +100,100 @@ describe("buildArgs", () => {
       "/tmp/a.png",
       "-i",
       "/tmp/b.jpg",
+      "--",
       "hello",
     ]);
+  });
+});
+
+describe("buildArgs argument injection", () => {
+  // Codex option-parses the trailing PROMPT positional. Without `--`,
+  // `codex exec --sandbox read-only --skip-git-repo-check "--version"` prints
+  // the CLI version instead of sending the prompt to the model.
+  it("separates a dash-prefixed prompt from the flags before it", () => {
+    const args = buildArgs({ sandbox: "read-only", prompt: "--version" });
+    expect(args.at(-2)).toBe("--");
+    expect(args.at(-1)).toBe("--version");
+  });
+
+  it("separates a prompt that would otherwise land as a config override", () => {
+    const payload = '-cmcp_servers={evil={command="touch",args=["/tmp/pwned"]}}';
+    const args = buildArgs({ sandbox: "read-only", prompt: payload });
+    expect(args.at(-2)).toBe("--");
+    expect(args.at(-1)).toBe(payload);
+  });
+
+  it("separates the prompt on the resume path too", () => {
+    const args = buildArgs({ conversationId: "thread_abc", prompt: "--version" });
+    expect(args.at(-2)).toBe("--");
+    expect(args.at(-1)).toBe("--version");
+  });
+
+  // `-i/--image` is variadic on `codex exec`, so a bare prompt straight after
+  // the last image path is read as another image rather than as the prompt.
+  it("separates the prompt from a preceding variadic image list", () => {
+    const args = buildArgs({
+      imagePaths: ["/tmp/a.png", "/tmp/b.png"],
+      prompt: "describe these",
+    });
+    expect(args.slice(-4)).toEqual(["-i", "/tmp/b.png", "--", "describe these"]);
+  });
+
+  // A second TOML key crammed into the model value is inert, because Codex
+  // parses the `-c` value portion as a single TOML value and ignores what
+  // follows, but the value must still stay inside its own token.
+  it("keeps a quote-breakout model value confined to one -c token", () => {
+    const args = buildArgs({
+      model: 'o3", sandbox_mode="danger-full-access',
+      conversationId: "thread_abc",
+    });
+    const idx = args.indexOf("-c");
+    expect(args[idx + 1]).toBe('model="o3", sandbox_mode="danger-full-access"');
+    expect(args).not.toContain('sandbox_mode="danger-full-access"');
+  });
+
+  it("omits the separator when the prompt goes over stdin", () => {
+    expect(buildArgs({ sandbox: "read-only", imagePaths: ["/tmp/a.png"] })).not.toContain("--");
+  });
+
+  // Emitting no sandbox flag on resume hands the decision to user config and
+  // project trust, which resolves to workspace-write in a trusted directory.
+  // `--sandbox` and `--full-auto` are parent `exec` flags, so both have to land
+  // before the subcommand.
+  it.each(["read-only", "workspace-write", "full-auto"] as const)(
+    "carries sandbox %s onto the resume path, before the subcommand",
+    (sandbox) => {
+      const args = buildArgs({ sandbox, conversationId: "thread_abc" });
+      const flag = sandbox === "full-auto" ? "--full-auto" : "--sandbox";
+      expect(args).toContain(flag);
+      expect(args.indexOf(flag)).toBeLessThan(args.indexOf("resume"));
+    },
+  );
+
+  // The read-only default lives in buildArgs, not only in the MCP input schema,
+  // so a caller that reaches the builder directly cannot fall back to config.
+  it("defaults an unspecified sandbox to read-only on both paths", () => {
+    expect(buildArgs({})).toContain("--sandbox");
+    expect(buildArgs({}).join(" ")).toContain("--sandbox read-only");
+    expect(buildArgs({ conversationId: "t" }).join(" ")).toContain("--sandbox read-only");
+  });
+
+  it("separates the prompt from images on the resume path", () => {
+    const args = buildArgs({
+      conversationId: "thread_abc",
+      imagePaths: ["/tmp/a.png"],
+      prompt: "describe this",
+    });
+    expect(args.slice(-4)).toEqual(["-i", "/tmp/a.png", "--", "describe this"]);
+  });
+
+  // reasoningEffort is schema-constrained to an enum today. It shares the
+  // `-c key="value"` shape with model, so pin that a value stays inside its
+  // own token if the enum is ever relaxed.
+  it("keeps reasoningEffort confined to one -c token", () => {
+    const args = buildArgs({ sandbox: "read-only", reasoningEffort: "high" });
+    const idx = args.indexOf("-c");
+    expect(args[idx + 1]).toBe('model_reasoning_effort="high"');
   });
 });
 

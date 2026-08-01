@@ -102,6 +102,10 @@ describe("executeQuery", () => {
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.stdin).toContain("summarize this");
     expect(call.stdin).toContain("some text to analyze");
+    // Caller text must never reach argv, where Codex would option-parse it.
+    // query has no positional prompt at all, and must keep it that way.
+    expect(call.args.join(" ")).not.toContain("summarize this");
+    expect(call.args.join(" ")).not.toContain("some text to analyze");
     expect(result.response).toBe("analysis result");
   });
 
@@ -192,8 +196,8 @@ describe("executeQuery", () => {
     const result = await executeQuery({ prompt: "test", model: "gpt-4.1" });
 
     const call = spawnCodexMock.mock.calls[0]![0];
-    expect(call.args).toContain("--model");
-    expect(call.args).toContain("gpt-4.1");
+    expect(call.args.some((a: string) => a.startsWith("--model="))).toBe(true);
+    expect(call.args).toContain("--model=gpt-4.1");
     expect(result.model).toBe("gpt-4.1");
   });
 

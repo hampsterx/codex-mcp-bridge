@@ -58,10 +58,13 @@ describe("executeSearch", () => {
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.cwd).toBe("/repo");
     expect(call.args.slice(0, 2)).toEqual(["--search", "exec"]);
-    expect(call.args).toContain("--model");
-    expect(call.args).toContain("o3");
+    expect(call.args.some((a: string) => a.startsWith("--model="))).toBe(true);
+    expect(call.args).toContain("--model=o3");
     expect(call.args).toContain("--skip-git-repo-check");
     expect(call.stdin).toContain("latest release notes");
+    // Caller text must never reach argv, where Codex would option-parse it.
+    // search has no positional prompt at all, and must keep it that way.
+    expect(call.args.join(" ")).not.toContain("latest release notes");
     expect(result.response).toBe("search response");
     expect(result.model).toBe("o3");
   });

@@ -132,16 +132,21 @@ export function buildReviewArgs(input: BuildReviewArgsInput): string[] {
     escapeArg(input.outputFile),
   ];
 
+  // `--flag=value` rather than `--flag value`: every one of these values is an
+  // unconstrained caller string. In the space form Codex refuses a
+  // dash-prefixed value outright ("a value is required for '--title <TITLE>'"),
+  // so a branch named `--foo` fails the whole review instead of being reviewed.
+  // The `=` form binds the value to its flag whatever it starts with.
   if (input.mode === "uncommitted") {
     args.push("--uncommitted");
   } else if (input.mode === "base") {
-    args.push("--base", input.base!);
+    args.push(`--base=${input.base!}`);
   } else {
-    args.push("--commit", input.commit!);
+    args.push(`--commit=${input.commit!}`);
   }
 
-  if (input.title) args.push("--title", input.title);
-  if (input.model) args.push("--model", input.model);
+  if (input.title) args.push(`--title=${input.title}`);
+  if (input.model) args.push(`--model=${input.model}`);
 
   return args;
 }

@@ -72,8 +72,13 @@ describe("executeStructured", () => {
 
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.cwd).toBe("/repo");
-    expect(call.args.slice(0, 6)).toEqual(["exec", "--model", "o3", "--sandbox", "read-only", "--skip-git-repo-check"]);
-    expect(call.args[6]).toContain("Extract answer");
+    expect(call.args.slice(0, 5)).toEqual(["exec", "--model=o3", "--sandbox", "read-only", "--skip-git-repo-check"]);
+    // Positional indices would shift the moment the structured path gains a
+    // default MCP override, so anchor on the separator instead.
+    const sep = call.args.indexOf("--");
+    expect(sep).toBeGreaterThan(-1);
+    expect(call.args[sep + 1]).toContain("Extract answer");
+    expect(call.args).toHaveLength(sep + 2);
     expect(call.stdin).toBeUndefined();
     expect(result.valid).toBe(true);
     expect(JSON.parse(result.response) as { answer: string }).toEqual({ answer: "ok" });

@@ -24,6 +24,16 @@ describe("isValidSessionId", () => {
     expect(isValidSessionId("a".repeat(257))).toBe(false);
     expect(isValidSessionId("a".repeat(256))).toBe(true);
   });
+
+  // The ID is emitted as the `resume <id>` positional, ahead of the `--`
+  // separator that protects the prompt, so a dash-prefixed value would reach
+  // Codex looking like a flag.
+  it("rejects a leading dash", () => {
+    expect(isValidSessionId("-x")).toBe(false);
+    expect(isValidSessionId("--last")).toBe(false);
+    expect(isValidSessionId("-")).toBe(false);
+    expect(isValidSessionId("a-b")).toBe(true);
+  });
 });
 
 describe("InMemorySessionStorage", () => {

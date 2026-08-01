@@ -51,7 +51,7 @@ export async function executeSearch(input: SearchInput): Promise<SearchResult> {
       // codex --search exec --skip-git-repo-check "prompt"
       // --search goes before exec subcommand
       const args: string[] = ["--search", "exec", ...getMcpServerOverride()];
-      if (m) args.push("--model", m);
+      if (m) args.push(`--model=${m}`);
       args.push("--skip-git-repo-check");
       return spawnCodex({ args, cwd, stdin: prompt, timeout: t });
     },

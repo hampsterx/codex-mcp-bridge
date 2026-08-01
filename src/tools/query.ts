@@ -64,7 +64,7 @@ export async function executeQuery(input: QueryInput): Promise<QueryResult> {
           // Disable all non-required MCP servers
           ...getMcpServerOverride("", { silent: true }),
         ];
-        if (m) args.push("--model", m);
+        if (m) args.push(`--model=${m}`);
         if (reasoningEffort) args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
         return spawnCodex({ args, cwd: tempDir, stdin: stdinPrompt, timeout: t });
       },
