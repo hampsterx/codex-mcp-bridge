@@ -69,6 +69,24 @@ describe("executeSearch", () => {
     expect(result.model).toBe("o3");
   });
 
+  // search declared no sandbox level at all, which left it to user config and
+  // project trust: a trusted cwd silently gave a web-search synthesis
+  // workspace-write. The pin keeps the declared level binding.
+  it("declares read-only and pins the approvals reviewer", async () => {
+    spawnCodexMock.mockResolvedValue({
+      stdout: "search response",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    await executeSearch({ query: "anything", workingDirectory: "/repo" });
+
+    const { args } = spawnCodexMock.mock.calls[0]![0];
+    expect(args.join(" ")).toContain("--sandbox read-only");
+    expect(args.join(" ")).toContain('-c approvals_reviewer="user"');
+  });
+
   it("returns timeout response without parsing output", async () => {
     spawnCodexMock.mockResolvedValue({
       stdout: "",

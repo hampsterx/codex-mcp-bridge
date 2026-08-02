@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.1] - 2026-08-02
+
+### Fixed
+
+- **The requested sandbox level is now binding, not advisory.** `0.9.0` made
+  every path emit a `--sandbox` level; this makes the level hold. Codex's
+  `approvals_reviewer` config key decides who approves a sandbox *escalation*,
+  and its non-default `auto_review` value hands that decision to a model rather
+  than a human. Under `codex exec` there is no human in the loop, so a user
+  config carrying `auto_review` let the subprocess escalate straight out of the
+  level in its own argv, silently. Measured on `codex-cli 0.145.0`, a turn
+  carrying `--sandbox read-only` wrote files through both Codex's native edit
+  tool and a plain `echo > file` shell command, on fresh and resumed turns
+  alike, in trusted and untrusted directories. Every path that declares a level
+  now also emits `-c approvals_reviewer="user"`, which restores the refusal.
+  Applies to `codex`, `query`, `search` and `structured`, and rides along with
+  `--full-auto` as well: that caller asked for `workspace-write`, not for an
+  unsupervised route past it. The setting also has a second route in, a
+  project-local `.codex/config.toml` in a trusted directory, so a repository can
+  carry the escalating value in-tree; the runtime `-c` override outranks both
+  layers. `review` passes `--ignore-user-config` and is not exposed by either.
+- **`search` declares a sandbox level.** It emitted none at all, so its sandbox
+  came from user config and project trust, and a trusted working directory
+  silently gave a web-search synthesis `workspace-write`. It now declares
+  `read-only`.
+
 ## [0.9.0] - 2026-08-02
 
 ### Fixed

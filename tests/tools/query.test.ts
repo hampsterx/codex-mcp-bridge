@@ -61,6 +61,9 @@ describe("executeQuery", () => {
     expect(call.args).toContain("--ephemeral");
     expect(call.args).toContain("exec");
     expect(call.args).toContain("--json");
+    // The level is advisory without this: user config can hand escalation
+    // approval to a model, and `codex exec` has no human to refuse it.
+    expect(call.args.join(" ")).toContain('-c approvals_reviewer="user"');
     // Verify no MCP servers are explicitly enabled (no --mcp-servers or inherit)
     expect(call.args).not.toContain("inherit");
   });

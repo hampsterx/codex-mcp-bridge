@@ -5,7 +5,7 @@ import { loadPrompt, buildLengthLimit } from "../utils/prompts.js";
 import { verifyDirectory } from "../utils/security.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
-import { getMcpServerOverride } from "../utils/env.js";
+import { getMcpServerOverride, getApprovalsReviewerOverride } from "../utils/env.js";
 
 export interface SearchInput {
   query: string;
@@ -52,6 +52,11 @@ export async function executeSearch(input: SearchInput): Promise<SearchResult> {
       // --search goes before exec subcommand
       const args: string[] = ["--search", "exec", ...getMcpServerOverride()];
       if (m) args.push(`--model=${m}`);
+      // Search synthesizes web results and has no reason to touch the tree.
+      // It declared no level at all before, which left the sandbox to user
+      // config and project trust, so a trusted cwd silently got
+      // workspace-write. The pin keeps the level binding.
+      args.push("--sandbox", "read-only", ...getApprovalsReviewerOverride());
       args.push("--skip-git-repo-check");
       return spawnCodex({ args, cwd, stdin: prompt, timeout: t });
     },

@@ -43,6 +43,8 @@ describe("buildArgs", () => {
       "--model=o3",
       "--sandbox",
       "read-only",
+      "-c",
+      "approvals_reviewer=\"user\"",
       "--skip-git-repo-check",
     ]);
   });
@@ -56,6 +58,8 @@ describe("buildArgs", () => {
       "--json",
       "--model=o3",
       "--full-auto",
+      "-c",
+      "approvals_reviewer=\"user\"",
       "--skip-git-repo-check",
     ]);
   });
@@ -71,6 +75,8 @@ describe("buildArgs", () => {
       "--json",
       "--sandbox",
       "read-only",
+      "-c",
+      "approvals_reviewer=\"user\"",
       "--skip-git-repo-check",
       "-c",
       "model=\"o3\"",
@@ -93,6 +99,8 @@ describe("buildArgs", () => {
       "--model=o3",
       "--sandbox",
       "read-only",
+      "-c",
+      "approvals_reviewer=\"user\"",
       "--skip-git-repo-check",
       "-o",
       "/tmp/response.txt",
@@ -147,7 +155,7 @@ describe("buildArgs argument injection", () => {
       model: 'o3", sandbox_mode="danger-full-access',
       conversationId: "thread_abc",
     });
-    const idx = args.indexOf("-c");
+    const idx = args.findIndex((a, i) => a === "-c" && args[i + 1]?.startsWith("model="));
     expect(args[idx + 1]).toBe('model="o3", sandbox_mode="danger-full-access"');
     expect(args).not.toContain('sandbox_mode="danger-full-access"');
   });
@@ -169,6 +177,44 @@ describe("buildArgs argument injection", () => {
       expect(args.indexOf(flag)).toBeLessThan(args.indexOf("resume"));
     },
   );
+
+  // A sandbox level is only as good as the config that surrounds it.
+  // `approvals_reviewer = "auto_review"` in user config hands escalation
+  // approval to a model rather than a human, and under `codex exec` there is no
+  // human, so the subprocess can escalate straight out of the level we passed.
+  // Pinning the reviewer to `user` means an escalation has nobody to approve it
+  // and is refused.
+  it.each([
+    ["read-only", {}],
+    ["workspace-write", {}],
+    ["full-auto", {}],
+    ["read-only on resume", { conversationId: "thread_abc" }],
+    ["full-auto on resume", { conversationId: "thread_abc" }],
+  ] as const)("pins the approvals reviewer alongside the sandbox (%s)", (label, extra) => {
+    const sandbox = label.startsWith("full-auto")
+      ? ("full-auto" as const)
+      : label.startsWith("workspace-write")
+        ? ("workspace-write" as const)
+        : ("read-only" as const);
+    const args = buildArgs({ sandbox, ...extra });
+    const idx = args.findIndex(
+      (a, i) => a === "-c" && args[i + 1] === 'approvals_reviewer="user"',
+    );
+    expect(idx).toBeGreaterThan(-1);
+    // Parent `exec` flag, so it has to land before the subcommand to apply.
+    if ("conversationId" in extra) {
+      expect(idx).toBeLessThan(args.indexOf("resume"));
+    }
+  });
+
+  // Unspecified sandbox is the path most likely to be reached by a caller who
+  // never thought about sandboxing, so it needs the pin most.
+  it("pins the approvals reviewer even when no sandbox was requested", () => {
+    expect(buildArgs({}).join(" ")).toContain('-c approvals_reviewer="user"');
+    expect(buildArgs({ conversationId: "t" }).join(" ")).toContain(
+      '-c approvals_reviewer="user"',
+    );
+  });
 
   // The read-only default lives in buildArgs, not only in the MCP input schema,
   // so a caller that reaches the builder directly cannot fall back to config.
@@ -192,7 +238,9 @@ describe("buildArgs argument injection", () => {
   // own token if the enum is ever relaxed.
   it("keeps reasoningEffort confined to one -c token", () => {
     const args = buildArgs({ sandbox: "read-only", reasoningEffort: "high" });
-    const idx = args.indexOf("-c");
+    const idx = args.findIndex(
+      (a, i) => a === "-c" && args[i + 1]?.startsWith("model_reasoning_effort="),
+    );
     expect(args[idx + 1]).toBe('model_reasoning_effort="high"');
   });
 });

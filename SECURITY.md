@@ -108,7 +108,13 @@ nothing in the response indicating the change.
 `--full-auto` are parent `exec` flags, so they are placed before the `resume`
 subcommand. An unspecified sandbox resolves to `read-only` inside `buildArgs`
 rather than only in the MCP input schema, so a caller reaching the builder
-directly cannot fall through to config.
+directly cannot fall through to config. `search` declared no level at all until
+`0.9.1`, which left it to the same config fallthrough; it now declares
+`read-only`, which is all a web-search synthesis needs.
+
+Emitting the level is necessary but not sufficient. See
+[Keeping the Sandbox Level Binding](#keeping-the-sandbox-level-binding) below
+for the config key that can escalate past it.
 
 The level is **per request, not sticky**. A resumed turn that wants anything
 above `read-only` has to say so; omitting it de-escalates to `read-only`. The
@@ -116,9 +122,53 @@ session store deliberately does not persist the sandbox level, because that
 would make a single escalation implicitly apply to every later turn on the same
 session.
 
-Note that the `codex` tool does not pass `--ignore-user-config`, so
-`~/.codex/config.toml` still influences everything the explicit flags do not
-cover. The `review` tool does pass it.
+## Keeping the Sandbox Level Binding
+
+Emitting a level is not the same as enforcing one. `approvals_reviewer` decides
+who approves a sandbox *escalation* request, and its non-default value
+`auto_review` hands that decision to a model: "Sandbox escalations with
+require_escalated will be reviewed for compliance with the policy." Under
+`codex exec` there is no human in the loop, so a user config carrying
+`auto_review` lets the subprocess escalate straight out of the level in its own
+argv, unsupervised, with nothing in the response saying so. Measured on
+`codex-cli 0.145.0`, a turn carrying `--sandbox read-only` wrote files both
+through Codex's native edit tool and through a plain `echo > file` shell
+command, on fresh and resumed turns alike, in trusted and untrusted directories.
+
+Every path that declares a sandbox level therefore also emits
+`-c approvals_reviewer="user"` (`getApprovalsReviewerOverride()`). With no human
+to ask, an escalation request is refused and the declared level holds. This pins
+only the bridge's own subprocess and leaves the user's interactive Codex
+untouched, which is why it is preferred over `--ignore-user-config` here: the
+`codex`, `query`, `search` and `structured` tools still need user config for
+model and auth resolution.
+
+**The setting has two routes in, and `-c` outranks both.** Beyond
+`$CODEX_HOME/config.toml`, Codex also loads a project-local `.codex/config.toml`
+layer, and `approvals_reviewer` is not on that layer's key denylist. So a
+repository can carry the escalating value in-tree. That layer is gated on the
+project being trusted in *user* config, which is a real limit but a weak one: a
+single broad entry such as `[projects."/home/me"] trust_level = "trusted"` makes
+every repository below it eligible. Measured against `codex-cli 0.145.0`: a
+trusted directory whose `.codex/config.toml` sets `auto_review` wrote the file
+under `--sandbox read-only`, and the same run with the pin was refused with
+`Read-only file system`. The runtime `-c` override wins over both layers, so one
+pin covers both routes.
+
+The `review` tool passes `--ignore-user-config` and is unaffected. That is not
+because the flag reaches the project layer directly (it does not, it empties the
+user layer) but because the trust gate for the project layer lives in the user
+layer it empties. Verified rather than assumed: a project-local `auto_review`
+under `--ignore-user-config` was refused. It is a load-bearing coincidence
+though, so if `review` ever drops `--ignore-user-config` it needs the pin.
+
+The pin rides along with `--full-auto` too. That caller asked for
+`workspace-write`, not for an unsupervised route past it.
+
+The general rule this is an instance of: an explicit flag is worth nothing if
+config can quietly overrule it, and config that overrules a security flag fails
+open. Anything added here that grants a capability should be checked for a
+config key that can widen it.
 
 ## Output Redaction
 

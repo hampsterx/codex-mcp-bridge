@@ -16,7 +16,7 @@ import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
 import { sessionStore, isValidSessionId } from "../utils/session.js";
 import { escapeArg } from "../utils/windows.js";
-import { getMcpServerOverride } from "../utils/env.js";
+import { getMcpServerOverride, getApprovalsReviewerOverride } from "../utils/env.js";
 
 export interface CodexInput {
   prompt: string;
@@ -237,11 +237,18 @@ interface BuildArgsInput {
 }
 
 /**
- * Push the sandbox selector. Every path emits one, including resume: the
- * resume subcommand otherwise inherits the sandbox from user config and
- * project trust, which resolves to `workspace-write` inside any trusted
- * project directory. Emitting the flag keeps a caller's chosen level in force
- * across every turn.
+ * Push the sandbox selector, and the config pin that makes it binding.
+ *
+ * Every path emits a level, including resume: the resume subcommand otherwise
+ * inherits the sandbox from user config and project trust, which resolves to
+ * `workspace-write` inside any trusted project directory. Emitting the flag
+ * keeps a caller's chosen level in force across every turn.
+ *
+ * The level alone is not enough. `approvals_reviewer = "auto_review"` in user
+ * config lets the subprocess escalate out of whatever level we pass, so the
+ * pin from `getApprovalsReviewerOverride()` rides along with it on both
+ * branches, `--full-auto` included: that caller asked for workspace-write, not
+ * for an unsupervised route past it.
  *
  * The `read-only` default lives here rather than only in the MCP input schema,
  * so that the safe posture holds for any caller of `buildArgs`, not just
@@ -257,6 +264,7 @@ function pushSandbox(args: string[], sandbox: BuildArgsInput["sandbox"]): void {
   } else {
     args.push("--sandbox", sandbox ?? "read-only");
   }
+  args.push(...getApprovalsReviewerOverride());
 }
 
 /**

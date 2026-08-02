@@ -7,7 +7,7 @@ import { checkErrorPatterns } from "../utils/errors.js";
 import { loadPrompt, buildLengthLimit } from "../utils/prompts.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
-import { getMcpServerOverride } from "../utils/env.js";
+import { getMcpServerOverride, getApprovalsReviewerOverride } from "../utils/env.js";
 
 export interface QueryInput {
   prompt: string;
@@ -59,6 +59,9 @@ export async function executeQuery(input: QueryInput): Promise<QueryResult> {
           "exec",
           "--json",
           "--sandbox", "read-only",
+          // Without this the level above is advisory: user config can hand
+          // escalation approval to a model instead of a human.
+          ...getApprovalsReviewerOverride(),
           "--skip-git-repo-check",
           "--ephemeral",
           // Disable all non-required MCP servers

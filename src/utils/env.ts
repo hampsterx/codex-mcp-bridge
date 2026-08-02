@@ -139,6 +139,32 @@ function enableListedServers(val: string, silent: boolean): string[] {
   return buildMcpArgs(configured, enabled, { silent });
 }
 
+/**
+ * Pin the approvals reviewer to `user`, so the sandbox level we ask for binds.
+ *
+ * `approvals_reviewer` decides who approves a sandbox escalation request. Its
+ * other value, `auto_review`, hands that decision to a model instead of a
+ * human: "Sandbox escalations with require_escalated will be reviewed for
+ * compliance with the policy". Under `codex exec` there is no human in the
+ * loop, so a user config carrying `auto_review` lets the subprocess escalate
+ * straight out of the level we passed, unsupervised and unreported. A caller
+ * asking for `read-only` then gets a turn that writes files, with `--sandbox
+ * read-only` sitting in the argv the whole time.
+ *
+ * Emitting `-c approvals_reviewer="user"` restores the refusal: with no human
+ * to ask, the escalation is denied and the sandbox holds. This pins only the
+ * bridge's own subprocess and leaves the user's interactive Codex alone, which
+ * is why it is preferred over `--ignore-user-config` (the `review` tool passes
+ * that, but it can afford to; the other tools need user config for model and
+ * auth resolution).
+ *
+ * Spread into argv alongside `getMcpServerOverride()`, and for the same reason:
+ * an explicit flag is worth nothing if config can quietly overrule it.
+ */
+export function getApprovalsReviewerOverride(): string[] {
+  return ["-c", 'approvals_reviewer="user"'];
+}
+
 /** Build a minimal, safe environment for Codex CLI subprocesses. */
 export function buildSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {

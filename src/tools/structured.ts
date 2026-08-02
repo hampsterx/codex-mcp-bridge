@@ -7,7 +7,7 @@ import { verifyDirectory, MAX_FILES } from "../utils/security.js";
 import { loadPrompt } from "../utils/prompts.js";
 import { resolveModel } from "../utils/model.js";
 import { withModelFallback, HARD_TIMEOUT_CAP } from "../utils/retry.js";
-import { getMcpServerOverride } from "../utils/env.js";
+import { getMcpServerOverride, getApprovalsReviewerOverride } from "../utils/env.js";
 
 // Ajv's CJS/ESM interop wraps the constructor in a default property at runtime
 const Ajv = _Ajv.default ?? _Ajv;
@@ -104,7 +104,9 @@ export async function executeStructured(input: StructuredInput): Promise<Structu
     (m, t) => {
       const args: string[] = ["exec", ...getMcpServerOverride()];
       if (m) args.push(`--model=${m}`);
-      args.push("--sandbox", "read-only", "--skip-git-repo-check");
+      // The pin keeps `read-only` binding; user config can otherwise hand
+      // escalation approval to a model instead of a human.
+      args.push("--sandbox", "read-only", ...getApprovalsReviewerOverride(), "--skip-git-repo-check");
       // `--` keeps the prompt a positional. The template prefix makes a
       // leading dash unreachable today, but the separator removes the
       // dependency on that rather than relying on it.
