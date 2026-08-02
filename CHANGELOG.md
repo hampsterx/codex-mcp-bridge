@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.9.0] - 2026-08-02
 
 ### Fixed
 
@@ -27,11 +27,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   resume paths. See `SECURITY.md` § Argument Injection for the mechanism,
   including why this stopped short of code execution and what would have
   removed that margin.
-- **Review flags accept dash-prefixed values.** `review`'s `base`, `commit`,
-  `title`, and `model` are unconstrained caller strings passed in the
-  `--flag value` form, which Codex rejects outright when the value starts with a
-  dash (`a value is required for '--title <TITLE>'`), failing the whole review.
-  These now use `--flag=value`.
+- **Caller values bind to their flags.** Unconstrained caller strings passed in
+  the `--flag value` form are rejected outright by Codex when the value starts
+  with a dash (`a value is required for '--title <TITLE>'`), failing the whole
+  invocation. `--model` now uses the `--flag=value` form in all five tools
+  (`codex`, `review`, `search`, `query`, `structured`), so the argv every tool
+  emits changes; `review`'s `base`, `commit`, and `title` use it too.
+- **`isValidSessionId` rejects a leading dash.** The conversation ID is the one
+  positional ahead of the `--` separator, so a dash-prefixed value would present
+  to Codex as a flag. The ID comes from CLI output rather than the caller, so
+  this is low risk, but it is a behaviour change in an exported helper.
 
 ## [0.8.0] - 2026-07-09
 
