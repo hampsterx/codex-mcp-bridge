@@ -15,6 +15,13 @@ coverage/
 # Local scripts (untracked)
 /switch-mcp.sh
 
+# Agent tool state (per-machine, not part of the package)
+/.serena/
+
+# Archived working docs. Same reasoning as the root uppercase markdown below:
+# PLAN_/HANDOVER_ files are local planning artifacts, and this repo is public.
+/docs/archive/
+
 # Root uppercase markdown (personal/local files)
 /[A-Z]*.md
 !/README.md
