@@ -12,6 +12,14 @@ const SILENT = join(process.cwd(), "tests", "fixtures", "fake-app-server-silent.
 /** Exits immediately, so writes hit a dead child. */
 const DIES = join(process.cwd(), "tests", "fixtures", "fake-app-server-dies.sh");
 
+/** The slot is released on child exit, which is asynchronous. */
+async function waitForSlots(target: number, timeoutMs = 4_000): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  while (getActiveCount() !== target && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /**
  * These cover the lifecycle contract, not the protocol: a live app-server
  * session costs 7-10s and boots the user's real MCP servers, so protocol
@@ -36,6 +44,20 @@ describe("AppServerSession lifecycle", () => {
     await session.open();
     expect(getActiveCount()).toBe(1);
     session.close();
+    await waitForSlots(0);
+    expect(getActiveCount()).toBe(0);
+  });
+
+  it("holds the slot until the child has actually exited", async () => {
+    // Releasing on SIGTERM rather than on exit would let a queued spawn start
+    // during the kill grace period, so live Codex process groups could exceed
+    // CODEX_MAX_CONCURRENT.
+    process.env["CODEX_CLI_PATH"] = SILENT;
+    const session = new AppServerSession();
+    await session.open();
+    session.close();
+    expect(getActiveCount()).toBe(1); // still held: child has not exited yet
+    await waitForSlots(0);
     expect(getActiveCount()).toBe(0);
   });
 
@@ -46,6 +68,7 @@ describe("AppServerSession lifecycle", () => {
     session.close();
     session.close();
     session.close();
+    await waitForSlots(0);
     // A double release would drive the count negative or free a slot the
     // session never held, letting concurrency drift above the configured max.
     expect(getActiveCount()).toBe(0);
@@ -54,10 +77,16 @@ describe("AppServerSession lifecycle", () => {
 
   it("releases the slot when the binary does not exist", async () => {
     process.env["CODEX_CLI_PATH"] = "/nonexistent/codex-binary";
-    const session = new AppServerSession();
+    // Short timeout: spawn reports ENOENT asynchronously, so if the error
+    // fires before request() registers its pending entry the rejection comes
+    // from the timeout instead. Either path must still release the slot.
+    const session = new AppServerSession({ requestTimeout: 1_000 });
     await session.open(); // spawn error surfaces asynchronously
-    await expect(session.request("initialize", {})).rejects.toThrow(/not found|failed/i);
+    await expect(session.request("initialize", {})).rejects.toThrow(
+      /not found|failed|timed out|exited/i,
+    );
     session.close();
+    await waitForSlots(0);
     expect(getActiveCount()).toBe(0);
   });
 
@@ -69,6 +98,7 @@ describe("AppServerSession lifecycle", () => {
     // so nothing resolves and the timeout must fire.
     await expect(session.request("initialize", {})).rejects.toThrow(/timed out/);
     session.close();
+    await waitForSlots(0);
     expect(getActiveCount()).toBe(0);
   });
 
@@ -142,6 +172,7 @@ describe("AppServerSession against a child that has already exited", () => {
     expect(() => session.notify("initialized", {})).not.toThrow();
 
     session.close();
+    await waitForSlots(0);
     expect(getActiveCount()).toBe(0);
   });
 });

@@ -88,6 +88,17 @@ describe("mergeStartupNotifications", () => {
     expect(merged.has("a")).toBe(false);
   });
 
+  it("attributes nothing when the session has no thread", () => {
+    // The default (no-thread) sequence promises it never reports `failed`.
+    // Treating a null session thread as "accept everything" would break that
+    // the moment the app-server emitted any failure notification.
+    const merged = mergeStartupNotifications(
+      [note("a", "failed", { threadId: null }), note("b", "failed", { threadId: THREAD })],
+      null,
+    );
+    expect(merged.size).toBe(0);
+  });
+
   it("ignores unrelated notification methods", () => {
     const merged = mergeStartupNotifications(
       [{ method: "thread/started", params: { name: "a", status: "ready" } }],

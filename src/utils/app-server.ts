@@ -23,6 +23,16 @@ const DEFAULT_REQUEST_TIMEOUT = 90_000;
 /** Grace period between SIGTERM and SIGKILL when tearing the child down. */
 const KILL_GRACE_MS = 5_000;
 
+/**
+ * Cap on unparsed stdout held between newlines. The largest real payload is a
+ * `mcpServerStatus/list` response carrying every tool schema (~1MB observed
+ * with 117 tools on one server), so this leaves generous headroom.
+ */
+const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+/** Cap on retained notifications. Real sessions produce ~50. */
+const MAX_NOTIFICATIONS = 100_000;
+
 interface PendingRequest {
   resolve: (msg: AppServerResponse) => void;
   reject: (err: Error) => void;
@@ -135,14 +145,25 @@ export class AppServerSession {
     this.child.stdin?.on("error", () => {});
 
     this.child.stdout?.on("data", (chunk: Buffer) => this.ingest(chunk.toString()));
+    // Same exposure as stdin: a Readable that emits 'error' with no listener
+    // throws an uncaught exception and kills the bridge process.
+    this.child.stdout?.on("error", () => {});
     // Drained but unused: app-server writes diagnostics here and a full pipe
     // buffer would block the child.
     this.child.stderr?.on("data", () => {});
+    this.child.stderr?.on("error", () => {});
   }
 
   /** Parse newline-delimited JSON, tolerating chunk boundaries mid-line. */
   private ingest(text: string): void {
     this.buffer += text;
+    // A child that streams without ever emitting a newline would otherwise
+    // grow this buffer without bound. Drop it rather than exhaust memory:
+    // pending requests still fail on their own timeout.
+    if (this.buffer.length > MAX_BUFFER_BYTES) {
+      this.buffer = "";
+      return;
+    }
     for (;;) {
       const idx = this.buffer.indexOf("\n");
       if (idx < 0) break;
@@ -174,7 +195,9 @@ export class AppServerSession {
           params: (msg["params"] as Record<string, unknown>) ?? {},
           at: this.elapsed(),
         };
-        this.notifications.push(n);
+        // Bounded so a chatty or malformed stream cannot grow this without
+        // limit; the drain only ever re-reads recent startup notifications.
+        if (this.notifications.length < MAX_NOTIFICATIONS) this.notifications.push(n);
         for (const fn of this.listeners) fn(n);
       }
     }
@@ -261,7 +284,18 @@ export class AppServerSession {
       const killTimer = setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS);
       // Never hold the event loop open just to force-kill a child.
       killTimer.unref?.();
-      child.once("close", () => clearTimeout(killTimer));
+
+      // Hold the slot until the child is actually gone. Releasing on SIGTERM
+      // would let a queued spawn start during the grace period, so live Codex
+      // process groups could exceed CODEX_MAX_CONCURRENT.
+      const backstop = setTimeout(() => this.releaseSlotOnce(), KILL_GRACE_MS + 2_000);
+      backstop.unref?.();
+      child.once("close", () => {
+        clearTimeout(killTimer);
+        clearTimeout(backstop);
+        this.releaseSlotOnce();
+      });
+      return;
     }
 
     this.releaseSlotOnce();

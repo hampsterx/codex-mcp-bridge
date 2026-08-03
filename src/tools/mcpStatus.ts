@@ -22,15 +22,36 @@ import {
   mergeStartupNotifications,
   nextCursorStep,
   parseListedServer,
+  redactError,
   type ListedServer,
   type McpServerReport,
+  type MergedNotification,
 } from "../utils/mcp-status.js";
 
 /** Hard ceiling on the notification drain in diagnostics mode. */
 const DRAIN_DEADLINE_MS = 60_000;
 
-/** Fallback quiet window, used only after every expected server reported. */
-const DRAIN_QUIET_MS = 3_000;
+/**
+ * Silence that ends the drain when some expected server never reported.
+ *
+ * Must exceed the largest real gap between startup notifications, or a slow
+ * healthy server is cut off and reported `unknown`. The spike's widest gap was
+ * ~5.8s (last `starting` wave at ~1.4s, slowest terminal at 7.2s), so this
+ * leaves room. The list call already runs first and absorbs 6-9s of that.
+ */
+const DRAIN_QUIET_MS = 10_000;
+
+/**
+ * Quiet required after every expected server has reported before the drain is
+ * called complete.
+ *
+ * Servers boot in two rounds, so a name can reach a terminal state in round 1
+ * and a *different* one in round 2. Returning the instant every name has some
+ * terminal state would close the session before the round-2 states land, and a
+ * transient round-1 `failed` followed by a round-2 `ready` would be reported as
+ * failed.
+ */
+const DRAIN_SETTLE_MS = 1_500;
 
 export interface McpStatusInput {
   /**
@@ -95,25 +116,34 @@ async function drainNotifications(
   expected: ReadonlySet<string>,
   deadlineMs: number,
 ): Promise<{ timedOut: boolean }> {
+  // Nothing to wait for. Without this the loop would burn the full deadline
+  // when the inventory failed and no servers are configured.
+  if (expected.size === 0) return { timedOut: false };
+
   const started = Date.now();
   let lastStartupAt = Date.now();
 
+  // Only startup notifications reset the window. Resetting on any traffic
+  // would let a chatty session defer completion indefinitely.
   const unsubscribe = session.onNotification((n) => {
     if (n.method === "mcpServer/startupStatus/updated") lastStartupAt = Date.now();
   });
 
   try {
     for (;;) {
+      // Only reached on the diagnostic path, which always has a thread.
       const merged = mergeStartupNotifications(session.getNotifications(), threadId);
-      const allReported =
-        expected.size > 0 && [...expected].every((name) => merged.has(name));
-      if (allReported) return { timedOut: false };
+      const allReported = [...expected].every((name) => merged.has(name));
+      const quietFor = Date.now() - lastStartupAt;
 
-      // Nothing expected has arrived for a while and the stream has gone
-      // quiet: give up rather than block on a server that never reports.
-      if (merged.size > 0 && Date.now() - lastStartupAt > DRAIN_QUIET_MS) {
-        return { timedOut: true };
-      }
+      // Complete, but only once the stream has settled, so round-2 states
+      // supersede round-1 ones before the session closes.
+      if (allReported && quietFor > DRAIN_SETTLE_MS) return { timedOut: false };
+
+      // Some server never reported and the stream has gone silent. Give up
+      // rather than block, but only after a window wider than any real
+      // inter-notification gap, so a slow healthy server is not cut off.
+      if (quietFor > DRAIN_QUIET_MS) return { timedOut: true };
       if (Date.now() - started > deadlineMs) return { timedOut: true };
 
       await new Promise((r) => setTimeout(r, 250));
@@ -148,7 +178,10 @@ async function fetchInventory(
 
     const response = await session.request("mcpServerStatus/list", params);
     if (response.error) {
-      incompleteReason = `mcpServerStatus/list failed: ${JSON.stringify(response.error)}`;
+      // Redacted for the same reason the notification error is: this is
+      // free-form text from the same child, and a failing server can echo a
+      // credential back into it.
+      incompleteReason = `mcpServerStatus/list failed: ${redactError(JSON.stringify(response.error))}`;
       break;
     }
     pageCount++;
@@ -188,6 +221,10 @@ export async function executeMcpStatus(
   const startedAt = Date.now();
   const diagnostics = input.diagnostics === true;
   const configured = configuredServerNames();
+  // Read before opening the session: execFileSync blocks for up to 10s, and
+  // inside the try it would hold the concurrency slot for that whole time
+  // after all real work is done.
+  const codexVersion = readCodexVersion();
 
   const session = new AppServerSession({
     ...(input.workingDirectory ? { cwd: input.workingDirectory } : {}),
@@ -202,10 +239,16 @@ export async function executeMcpStatus(
 
     // `experimentalApi` is not required (verified: the methods are ungated on
     // 0.146.0) but it is the documented opt-in for experimental fields.
-    await session.request("initialize", {
+    const init = await session.request("initialize", {
       clientInfo: { name: "codex-mcp-bridge", version: "0" },
       capabilities: { experimentalApi: true },
     });
+    if (init.error) {
+      // Nothing downstream is meaningful if the handshake was refused.
+      throw new Error(
+        `codex app-server rejected initialize: ${redactError(JSON.stringify(init.error))}`,
+      );
+    }
     session.notify("initialized", {});
 
     if (diagnostics) {
@@ -216,6 +259,14 @@ export async function executeMcpStatus(
       const thread = (result["thread"] ?? {}) as Record<string, unknown>;
       // The id lives at params.thread.id, not params.threadId.
       threadId = typeof thread["id"] === "string" ? thread["id"] : null;
+      if (threadId === null) {
+        // Say so rather than silently degrading to the inventory-only answer:
+        // without a thread there are no notifications, so no server can be
+        // reported `failed` and the caller would not otherwise know why.
+        incompleteReason = started.error
+          ? `thread/start failed, so no diagnostic states are available: ${redactError(JSON.stringify(started.error))}`
+          : "thread/start returned no thread id, so no diagnostic states are available";
+      }
     }
 
     // Fetch the inventory first so the drain has a real expected set: config
@@ -243,7 +294,13 @@ export async function executeMcpStatus(
     }
 
     const degraded = inventory.durationMs > DEGRADED_LIST_MS;
-    const merged = mergeStartupNotifications(session.getNotifications(), threadId);
+    // Only the diagnostic path has a thread, and only a thread can attribute
+    // notifications. mergeStartupNotifications enforces this too; gating here
+    // as well keeps the default path's "never reports failed" contract local
+    // and obvious.
+    const merged = diagnostics
+      ? mergeStartupNotifications(session.getNotifications(), threadId)
+      : new Map<string, MergedNotification>();
 
     const servers = classifyServers({
       listed: inventory.servers,
@@ -261,7 +318,7 @@ export async function executeMcpStatus(
       ...(incompleteReason ? { incompleteReason } : {}),
       diagnostics,
       threadId,
-      codexVersion: readCodexVersion(),
+      codexVersion,
       pageCount: inventory.pageCount,
       totalDurationMs: Date.now() - startedAt,
     };

@@ -99,6 +99,12 @@ export function mergeStartupNotifications(
 ): Map<string, MergedNotification> {
   const merged = new Map<string, MergedNotification>();
 
+  // No live thread means nothing can be attributed to this session, so no
+  // notification earns a verdict. Treating a null session thread as
+  // "accept everything" would let the default (no-thread) sequence emit a
+  // `failed` state, which its contract promises it never does.
+  if (threadId === null) return merged;
+
   for (const n of notifications) {
     if (n.method !== "mcpServer/startupStatus/updated") continue;
     const params = n.params ?? {};
@@ -110,7 +116,7 @@ export function mergeStartupNotifications(
     const thread = typeof rawThread === "string" ? rawThread : NULL_THREAD_KEY;
     // Quarantine: only the session's own thread contributes. A null or
     // foreign threadId is dropped rather than polluting the live bucket.
-    if (threadId !== null && thread !== threadId) continue;
+    if (thread !== threadId) continue;
 
     if (status === "starting" || status === "cancelled") continue;
     if (status !== "ready" && status !== "failed") continue;
