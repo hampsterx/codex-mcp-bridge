@@ -43,8 +43,8 @@ than a flag on `spawnCodex`.
 The protocol is JSON-RPC-shaped but omits `jsonrpc`, and `initialize` requires
 only `clientInfo`. It is experimental upstream, so `tests/utils/appserver-schema-drift.test.ts`
 regenerates the schema from the installed CLI and diffs the definitions the
-bridge parses. See `PLAN_MCP_BOOT_INTROSPECTION.md` for the captured evidence
-behind every shape.
+bridge parses. See [ADR-002](docs/decisions/002-mcp-introspection-reports-observation-not-health.md)
+for the reporting contract these shapes feed.
 
 ## Output Parsing
 

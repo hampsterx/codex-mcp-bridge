@@ -176,3 +176,44 @@ describe("AppServerSession against a child that has already exited", () => {
     expect(getActiveCount()).toBe(0);
   });
 });
+
+describe("AppServerSession stream decoding", () => {
+  const origPath = process.env["CODEX_CLI_PATH"];
+
+  beforeEach(() => resetConcurrency(2));
+  afterEach(() => {
+    if (origPath === undefined) delete process.env["CODEX_CLI_PATH"];
+    else process.env["CODEX_CLI_PATH"] = origPath;
+    resetConcurrency();
+  });
+
+  it("sets utf8 encoding on stdout so multi-byte characters survive chunking", async () => {
+    // Decoding each Buffer independently turns a UTF-8 sequence split across
+    // two reads into replacement characters, and the line is then dropped by
+    // the JSON.parse catch. setEncoding makes Node hold the partial sequence.
+    process.env["CODEX_CLI_PATH"] = SILENT;
+    const session = new AppServerSession();
+    await session.open();
+    const stdout = (session as unknown as { child: { stdout: { readableEncoding: string } } })
+      .child.stdout;
+    expect(stdout.readableEncoding).toBe("utf8");
+    session.close();
+    await waitForSlots(0);
+  });
+
+  it("rejects a request issued after the child has exited, without waiting for the timeout", async () => {
+    process.env["CODEX_CLI_PATH"] = DIES;
+    // 90s default would be the symptom; a long timeout here proves the reject
+    // comes from the exit check rather than from the timer.
+    const session = new AppServerSession({ requestTimeout: 60_000 });
+    await session.open();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const started = Date.now();
+    await expect(session.request("initialize", {})).rejects.toThrow(/not found|exited|failed/i);
+    expect(Date.now() - started).toBeLessThan(2_000);
+
+    session.close();
+    await waitForSlots(0);
+  });
+});

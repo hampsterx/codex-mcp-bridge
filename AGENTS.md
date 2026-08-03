@@ -86,7 +86,7 @@ Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progr
 - Cannot reuse `spawnCodex`: that closes stdin and buffers stdout to a string. `src/utils/app-server.ts` is a separate streaming transport holding one concurrency slot.
 - **`serverInfo` is not a health bit.** Slow list calls have been observed reporting explicitly-`ready` servers as uninitialized, so absence means `unknown` and `failed` comes only from a startup notification.
 - MCP servers boot in **two rounds** per thread, emitting four notifications each; `cancelled` belongs to the superseded first attempt and arrives *before* `ready`. The merge discards `starting` and `cancelled` outright.
-- Full evidence and rationale: `PLAN_MCP_BOOT_INTROSPECTION.md`.
+- Full rationale, and the premise that would void the environment exception: `docs/decisions/002-mcp-introspection-reports-observation-not-health.md`.
 
 ### Subprocess Spawning
 - Always `spawn` with `shell: false`, args as array (never `exec`)

@@ -2,19 +2,23 @@
  * MCP boot introspection: report what Codex's own app-server says about each
  * configured MCP server.
  *
- * Two sequences, per PLAN_MCP_BOOT_INTROSPECTION.md § Route:
+ * Two sequences:
  *
  *   A (default):     initialize -> initialized -> mcpServerStatus/list
  *   B (diagnostics): adds thread/start -> drain notifications -> list
  *
- * A is ~6s and creates no thread. B costs 19-47s and creates an ephemeral
+ * A runs ~6-9s and creates no thread. B runs ~10-20s, creates an ephemeral
  * thread, and is the only route to an explicit `failed` verdict plus the
- * free-form error text that names the actual cause.
+ * free-form error text naming the actual cause. Both figures are wall-clock
+ * observations on codex-cli 0.146.0 with 12 configured servers; they scale
+ * with how many servers Codex has to boot.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { AppServerSession } from "../utils/app-server.js";
 import { findCodexBinary } from "../utils/spawn.js";
+import { verifyDirectory } from "../utils/security.js";
 import {
   readCodexConfig,
   listMcpServers,
@@ -84,12 +88,20 @@ export interface McpStatusResult {
   totalDurationMs: number;
 }
 
-function readCodexVersion(): string | null {
+const execFileAsync = promisify(execFile);
+
+/**
+ * Async on purpose: the bridge serves every MCP tool over one stdio transport,
+ * so a synchronous probe blocks the event loop for its whole timeout and
+ * stalls unrelated tool handlers and their progress heartbeats.
+ */
+async function readCodexVersion(): Promise<string | null> {
   try {
-    return execFileSync(findCodexBinary(), ["--version"], {
+    const { stdout } = await execFileAsync(findCodexBinary(), ["--version"], {
       encoding: "utf8",
       timeout: 10_000,
-    }).trim();
+    });
+    return stdout.trim();
   } catch {
     return null;
   }
@@ -255,15 +267,20 @@ export async function executeMcpStatus(
   // Read before opening the session: execFileSync blocks for up to 10s, and
   // inside the try it would hold the concurrency slot for that whole time
   // after all real work is done.
-  const codexVersion = readCodexVersion();
+  const codexVersion = await readCodexVersion();
+
+  // Resolve and verify before handing it to a spawn, as the other tools do.
+  const cwd = input.workingDirectory
+    ? await verifyDirectory(input.workingDirectory)
+    : undefined;
 
   const session = new AppServerSession({
-    ...(input.workingDirectory ? { cwd: input.workingDirectory } : {}),
+    ...(cwd ? { cwd } : {}),
     ...(input.timeout ? { requestTimeout: input.timeout } : {}),
   });
 
   let threadId: string | null = null;
-  let incompleteReason: string | undefined;
+  const incompleteReasons: string[] = [];
 
   try {
     await session.open();
@@ -294,9 +311,9 @@ export async function executeMcpStatus(
         // Say so rather than silently degrading to the inventory-only answer:
         // without a thread there are no notifications, so no server can be
         // reported `failed` and the caller would not otherwise know why.
-        incompleteReason = started.error
+        incompleteReasons.push(started.error
           ? `thread/start failed, so no diagnostic states are available: ${redactError(JSON.stringify(started.error), extraSecrets)}`
-          : "thread/start returned no thread id, so no diagnostic states are available";
+          : "thread/start returned no thread id, so no diagnostic states are available");
       }
     }
 
@@ -304,7 +321,7 @@ export async function executeMcpStatus(
     // alone misses built-ins like `codex_apps`, which is reported by the
     // app-server but absent from config.toml.
     const inventory = await fetchInventory(session, threadId, extraSecrets);
-    if (inventory.incompleteReason) incompleteReason = inventory.incompleteReason;
+    if (inventory.incompleteReason) incompleteReasons.push(inventory.incompleteReason);
 
     let drainTimedOut = false;
     if (diagnostics) {
@@ -323,8 +340,10 @@ export async function executeMcpStatus(
         extraSecrets,
       );
       drainTimedOut = drained.timedOut;
-      if (drainTimedOut && !incompleteReason) {
-        incompleteReason = "not every server reported a terminal startup state before the deadline";
+      if (drainTimedOut) {
+        incompleteReasons.push(
+          "not every server reported a terminal startup state before the deadline",
+        );
       }
     }
 
@@ -349,8 +368,10 @@ export async function executeMcpStatus(
       servers,
       listDurationMs: inventory.durationMs,
       degraded,
-      incomplete: incompleteReason !== undefined,
-      ...(incompleteReason ? { incompleteReason } : {}),
+      incomplete: incompleteReasons.length > 0,
+      ...(incompleteReasons.length > 0
+        ? { incompleteReason: incompleteReasons.join("; ") }
+        : {}),
       diagnostics,
       threadId,
       codexVersion,

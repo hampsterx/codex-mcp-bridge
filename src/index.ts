@@ -544,8 +544,8 @@ server.registerTool(
 Unlike the other tools, this one deliberately does NOT suppress Codex's MCP servers — suppressing them would disable the thing being measured — so it is slower than a normal call and boots the servers named in ~/.codex/config.toml.
 
 Two modes:
-- Default (~6s): inventory only. Reports each server as "initialized" or "unknown". Creates no thread and writes no session record.
-- diagnostics: true (20-50s): starts an ephemeral thread to collect startup notifications, which are the only source of an explicit "failed" state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal).
+- Default (~6-9s): inventory only. Reports each server as "initialized" or "unknown". Creates no thread and writes no session record.
+- diagnostics: true (~10-20s): starts an ephemeral thread to collect startup notifications, which are the only source of an explicit "failed" state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal).
 
 Reading the output:
 - "unknown" is not a failure. It means the inventory carried no server info and no explicit verdict was available. Only diagnostics mode can report "failed".

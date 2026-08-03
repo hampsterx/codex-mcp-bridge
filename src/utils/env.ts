@@ -192,10 +192,14 @@ export function getApprovalsReviewerOverride(): string[] {
  *    redacted before it reaches the caller.
  */
 export function buildIntrospectionEnv(): Record<string, string> {
-  const env: Record<string, string> = { NO_COLOR: "1", FORCE_COLOR: "0" };
+  const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
+  // Pinned AFTER the copy. Seeding them first lets an inherited FORCE_COLOR=1
+  // win, which puts ANSI escapes into the JSONL stream the parser reads.
+  env["NO_COLOR"] = "1";
+  env["FORCE_COLOR"] = "0";
   return env;
 }
 

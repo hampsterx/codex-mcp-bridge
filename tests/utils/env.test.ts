@@ -462,9 +462,23 @@ describe("buildIntrospectionEnv", () => {
     expect(buildSubprocessEnv()[KEY]).toBeUndefined();
   });
 
-  it("still pins colour off, so output stays parseable", () => {
-    const env = buildIntrospectionEnv();
-    expect(env["NO_COLOR"]).toBe("1");
-    expect(env["FORCE_COLOR"]).toBe("0");
+  it("pins colour off even when the parent sets the opposite", () => {
+    // Seeding the pins before copying process.env lets an inherited value win,
+    // which puts ANSI escapes into the JSONL stream the parser reads. Asserting
+    // the pins without a competing parent value cannot catch that.
+    const origForce = process.env["FORCE_COLOR"];
+    const origNo = process.env["NO_COLOR"];
+    try {
+      process.env["FORCE_COLOR"] = "1";
+      process.env["NO_COLOR"] = "";
+      const env = buildIntrospectionEnv();
+      expect(env["NO_COLOR"]).toBe("1");
+      expect(env["FORCE_COLOR"]).toBe("0");
+    } finally {
+      if (origForce === undefined) delete process.env["FORCE_COLOR"];
+      else process.env["FORCE_COLOR"] = origForce;
+      if (origNo === undefined) delete process.env["NO_COLOR"];
+      else process.env["NO_COLOR"] = origNo;
+    }
   });
 });

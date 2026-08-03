@@ -29,7 +29,7 @@ upstream surface behaves as measured:
 2. **A wrong failure costs more than a missing verdict.** This tool exists so
    nobody has to read Codex logs by hand to find out why a server is missing.
    Reporting a working server as broken sends a reader to debug something that
-   is not there, which is worse than the state quo of no report at all. The
+   is not there, which is worse than the status quo of no report at all. The
    asymmetry is not symmetric noise: it is one-directional, and it worsens
    exactly when the machine is loaded, which is when someone is most likely to
    be diagnosing something.

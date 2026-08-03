@@ -73,6 +73,7 @@ export class AppServerSession {
   private buffer = "";
   private nextId = 1;
   private closed = false;
+  private exited = false;
   private slotHeld = false;
   private startedAt = 0;
   private spawnError: Error | undefined;
@@ -137,6 +138,7 @@ export class AppServerSession {
     // the listener it registers would then never run, leaving the slot pinned
     // until the backstop timer.
     this.child.on("close", () => {
+      this.exited = true;
       this.failAllPending(
         this.spawnError ?? new Error("codex app-server exited before responding"),
       );
@@ -149,7 +151,13 @@ export class AppServerSession {
     // session. Pending callers are already failed by the 'close' handler.
     this.child.stdin?.on("error", () => {});
 
-    this.child.stdout?.on("data", (chunk: Buffer) => this.ingest(chunk.toString()));
+    // setEncoding rather than per-chunk toString(): Node then holds a partial
+    // multi-byte sequence across chunk boundaries. Decoding each Buffer
+    // independently turns a UTF-8 character split across two reads into
+    // replacement characters, and the line is then dropped by the JSON.parse
+    // catch in ingest().
+    this.child.stdout?.setEncoding("utf8");
+    this.child.stdout?.on("data", (chunk: string) => this.ingest(chunk));
     // Same exposure as stdin: a Readable that emits 'error' with no listener
     // throws an uncaught exception and kills the bridge process.
     this.child.stdout?.on("error", () => {});
@@ -220,6 +228,14 @@ export class AppServerSession {
   request(method: string, params: unknown = {}): Promise<AppServerResponse> {
     if (this.closed) return Promise.reject(new Error("session is closed"));
     if (!this.child) return Promise.reject(new Error("session is not open"));
+    // The error/close handlers only fail entries already pending when they
+    // run. Without these checks a request issued afterwards is registered with
+    // nothing left to fail it, so the caller waits the full request timeout and
+    // gets "timed out" instead of the actionable spawn error.
+    if (this.spawnError) return Promise.reject(this.spawnError);
+    if (this.exited) {
+      return Promise.reject(new Error("codex app-server exited before responding"));
+    }
 
     const id = this.nextId++;
     return new Promise<AppServerResponse>((resolve, reject) => {

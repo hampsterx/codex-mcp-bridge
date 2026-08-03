@@ -149,7 +149,7 @@ Key parameters: `diagnostics` (default `false`), `workingDirectory`, `timeout` (
 | Mode | Cost | What you get |
 |------|------|--------------|
 | default | ~6-9s | Inventory: auth type, tool names and counts, and `initialized` / `unknown` per server. Creates no thread and writes no session record. |
-| `diagnostics: true` | ~10-50s | Adds an explicit `failed` state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal). Starts an ephemeral thread, which is never materialised on disk. |
+| `diagnostics: true` | ~10-20s | Adds an explicit `failed` state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal). Starts an ephemeral thread, which is never materialised on disk. |
 
 Reading the output:
 
@@ -159,7 +159,7 @@ Reading the output:
 
 Example:
 
-```
+```text
 atlassian            failed       auth=oAuth  tools=0
     error: MCP client for `atlassian` failed to start: MCP startup failed: failed to
     refresh OAuth tokens for server atlassian: ... invalid_grant: Grant not found
