@@ -131,11 +131,16 @@ export class AppServerSession {
       this.failAllPending(this.spawnError);
     });
 
-    // A child that exits mid-session must not leave callers hanging.
+    // A child that exits mid-session must not leave callers hanging, and must
+    // not keep holding a concurrency slot for a process that is already gone.
+    // Releasing here matters because `close()` can run after this fires, and
+    // the listener it registers would then never run, leaving the slot pinned
+    // until the backstop timer.
     this.child.on("close", () => {
       this.failAllPending(
         this.spawnError ?? new Error("codex app-server exited before responding"),
       );
+      this.releaseSlotOnce();
     });
 
     // A child that has already exited turns the next stdin write into an

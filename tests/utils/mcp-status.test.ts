@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   DEGRADED_LIST_MS,
   MAX_PAGES,
@@ -7,6 +7,7 @@ import {
   nextCursorStep,
   parseListedServer,
   redactError,
+  serversStillStarting,
   type ListedServer,
 } from "../../src/utils/mcp-status.js";
 
@@ -320,5 +321,113 @@ describe("DEGRADED_LIST_MS", () => {
     // Spike measurements: clean runs topped out at 13.0s, bad runs started at 35.8s.
     expect(DEGRADED_LIST_MS).toBeGreaterThan(13_000);
     expect(DEGRADED_LIST_MS).toBeLessThan(35_800);
+  });
+});
+
+describe("classifyServers, configured but absent from the inventory", () => {
+  it("keeps an explicit failed verdict and its diagnostic", () => {
+    // A degraded or truncated list can omit a server that nevertheless emitted
+    // a perfectly good `failed` notification. Dropping that verdict would
+    // throw away the one diagnostic the caller came for.
+    const reports = classifyServers({
+      listed: [],
+      merged: new Map([["ghost", { status: "failed" as const, error: "no such binary" }]]),
+      configuredNames: ["ghost"],
+      diagnostics: true,
+      degraded: true,
+    });
+    expect(reports[0]?.state).toBe("failed");
+    expect(reports[0]?.error).toBe("no such binary");
+    expect(reports[0]?.origin).toBe("configuredButUnreported");
+  });
+
+  it("still reports unknown when no notification exists", () => {
+    const reports = classifyServers({
+      listed: [],
+      merged: new Map(),
+      configuredNames: ["ghost"],
+      diagnostics: true,
+      degraded: false,
+    });
+    expect(reports[0]?.state).toBe("unknown");
+    expect(reports[0]?.error).toBeUndefined();
+  });
+});
+
+describe("serversStillStarting", () => {
+  it("reports a server whose most recent notification is starting", () => {
+    // Round-1 terminal followed by a round-2 restart: the merged terminal is
+    // stale, and treating it as an answer would return the round-1 value.
+    const starting = serversStillStarting(
+      [note("a", "starting"), note("a", "failed"), note("a", "starting")],
+      THREAD,
+    );
+    expect(starting.has("a")).toBe(true);
+  });
+
+  it("clears once the server reaches a terminal state", () => {
+    const starting = serversStillStarting(
+      [note("a", "starting"), note("a", "failed"), note("a", "starting"), note("a", "ready")],
+      THREAD,
+    );
+    expect(starting.has("a")).toBe(false);
+  });
+
+  it("counts cancelled as settled, since round 2 re-announces with starting", () => {
+    const starting = serversStillStarting([note("a", "starting"), note("a", "cancelled")], THREAD);
+    expect(starting.has("a")).toBe(false);
+  });
+
+  it("attributes nothing without a thread", () => {
+    expect(serversStillStarting([note("a", "starting")], null).size).toBe(0);
+  });
+
+  it("ignores other threads", () => {
+    const starting = serversStillStarting(
+      [note("a", "starting", { threadId: "other" })],
+      THREAD,
+    );
+    expect(starting.size).toBe(0);
+  });
+});
+
+describe("redactError, env-value layer", () => {
+  const KEY = "MCPSTATUS_TEST_SLACK_TOKEN";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("redacts a token shape the shared pattern list misses", () => {
+    // The shared list covers sk-/AKIA/Bearer/token=. This path inherits the
+    // full environment, so third-party shapes reach it too.
+    const out = redactError("failed: xoxp-1234567890-abcdefghijkl");
+    expect(out).not.toContain("xoxp-1234567890-abcdefghijkl");
+  });
+
+  it("redacts GitHub and GitLab token shapes", () => {
+    expect(redactError("ghp_abcdefghijklmnopqrstuvwxyz0123")).not.toContain("ghp_abcdef");
+    expect(redactError("glpat-abcdefghijklmnopqrst")).not.toContain("glpat-abcdef");
+  });
+
+  it("redacts the literal value of a secret-named env var", () => {
+    // The strong layer: the child inherits these values, so we know exactly
+    // what to look for instead of guessing a shape.
+    process.env[KEY] = "totally-opaque-value-with-no-recognisable-shape";
+    const out = redactError(`server died: ${process.env[KEY]} rejected`);
+    expect(out).not.toContain("totally-opaque-value");
+    expect(out).toContain("[REDACTED]");
+  });
+
+  it("leaves a short env value alone, so unrelated text is not mangled", () => {
+    process.env[KEY] = "dev";
+    expect(redactError("running in dev mode")).toBe("running in dev mode");
+  });
+
+  it("still keeps the remediation URL", () => {
+    const out = redactError(
+      "App is not enabled. Please enable it here: https://api.slack.com/apps/A0B0K6CP19D",
+    );
+    expect(out).toContain("https://api.slack.com/apps/");
   });
 });

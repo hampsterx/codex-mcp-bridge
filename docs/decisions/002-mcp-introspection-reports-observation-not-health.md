@@ -79,9 +79,10 @@ of the bridge's reconstruction rather than of the user's configuration.
 
 ## Consequences
 
-- Callers get a state they can act on. `failed` always carries a real
-  diagnostic; `unknown` is an honest admission, not a soft failure, and the
-  tool description says so.
+- Callers get a state they can act on. `failed` means Codex said so, and
+  carries the diagnostic text whenever Codex supplied one (the `error` field is
+  optional in the protocol, so a bare `failed` is possible). `unknown` is an
+  honest admission, not a soft failure, and the tool description says so.
 - The cheap default path cannot report failures at all. That is the price of it
   being cheap, and the tool points the caller at `diagnostics: true` when they
   need a verdict.

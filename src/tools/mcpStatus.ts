@@ -23,6 +23,7 @@ import {
   nextCursorStep,
   parseListedServer,
   redactError,
+  serversStillStarting,
   type ListedServer,
   type McpServerReport,
   type MergedNotification,
@@ -42,14 +43,14 @@ const DRAIN_DEADLINE_MS = 60_000;
 const DRAIN_QUIET_MS = 10_000;
 
 /**
- * Quiet required after every expected server has reported before the drain is
- * called complete.
+ * Quiet required after every expected server has settled.
  *
- * Servers boot in two rounds, so a name can reach a terminal state in round 1
- * and a *different* one in round 2. Returning the instant every name has some
- * terminal state would close the session before the round-2 states land, and a
- * transient round-1 `failed` followed by a round-2 `ready` would be reported as
- * failed.
+ * Small on purpose. The correctness work is done by `serversStillStarting`,
+ * which knows a server is mid-boot rather than inferring it from silence, so a
+ * round-1 terminal cannot be mistaken for an answer while round 2 is in
+ * flight. This window only absorbs the gap between a terminal notification and
+ * an immediate follow-up; widening it to cover the slowest possible boot would
+ * charge that cost to every call.
  */
 const DRAIN_SETTLE_MS = 1_500;
 
@@ -119,6 +120,10 @@ async function drainNotifications(
   // Nothing to wait for. Without this the loop would burn the full deadline
   // when the inventory failed and no servers are configured.
   if (expected.size === 0) return { timedOut: false };
+  // Without a thread, no notification can be attributed to this session, so
+  // waiting is guaranteed to be wasted time (the merge returns empty by
+  // construction). The caller already records why the thread is missing.
+  if (threadId === null) return { timedOut: true };
 
   const started = Date.now();
   let lastStartupAt = Date.now();
@@ -132,12 +137,18 @@ async function drainNotifications(
   try {
     for (;;) {
       // Only reached on the diagnostic path, which always has a thread.
-      const merged = mergeStartupNotifications(session.getNotifications(), threadId);
-      const allReported = [...expected].every((name) => merged.has(name));
+      const notifications = session.getNotifications();
+      const merged = mergeStartupNotifications(notifications, threadId);
+      const starting = serversStillStarting(notifications, threadId);
+      // A server whose most recent notification is `starting` is mid-boot, so
+      // its merged terminal is a stale round-1 value, not an answer.
+      const allReported = [...expected].every(
+        (name) => merged.has(name) && !starting.has(name),
+      );
       const quietFor = Date.now() - lastStartupAt;
 
-      // Complete, but only once the stream has settled, so round-2 states
-      // supersede round-1 ones before the session closes.
+      // Complete once nothing is in flight and the stream has settled briefly,
+      // so a round-2 state supersedes its round-1 predecessor before close.
       if (allReported && quietFor > DRAIN_SETTLE_MS) return { timedOut: false };
 
       // Some server never reported and the stream has gone silent. Give up
@@ -277,10 +288,13 @@ export async function executeMcpStatus(
 
     let drainTimedOut = false;
     if (diagnostics) {
-      const expected = new Set<string>([
-        ...configured,
-        ...inventory.servers.map((s) => s.name),
-      ]);
+      // Only servers Codex actually reports can emit startup notifications.
+      // Including configured-but-unreported names (a `enabled = false` entry,
+      // or a stale one) makes the all-reported condition unsatisfiable, so
+      // every call would burn the full quiet timeout and report `incomplete`
+      // for a config that is merely normal. Those names are still surfaced,
+      // by classifyServers, as `configuredButUnreported`.
+      const expected = new Set<string>(inventory.servers.map((s) => s.name));
       const drained = await drainNotifications(
         session,
         threadId,

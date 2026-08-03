@@ -134,15 +134,68 @@ export function mergeStartupNotifications(
 }
 
 /**
- * Redact credentials from a free-form startup error.
+ * Token shapes the shared `redactSecrets` list does not cover.
+ *
+ * That list is tuned for Codex's own output (OpenAI/Anthropic/AWS keys, bearer
+ * headers). This path is different: it inherits the full environment, so the
+ * credentials in play are whatever the user's MCP servers use, and a failing
+ * server can echo its own token into the startup error.
+ */
+const EXTRA_TOKEN_PATTERNS = [
+  /\bghp_[A-Za-z0-9]{16,}/g, // GitHub personal access token
+  /\bgho_[A-Za-z0-9]{16,}/g, // GitHub OAuth token
+  /\bghs_[A-Za-z0-9]{16,}/g, // GitHub server-to-server token
+  /\bgithub_pat_[A-Za-z0-9_]{16,}/g, // GitHub fine-grained PAT
+  /\bglpat-[A-Za-z0-9_-]{16,}/g, // GitLab PAT
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, // Slack tokens
+  /\bAIza[A-Za-z0-9_-]{30,}/g, // Google API key
+  /\bBasic\s+[A-Za-z0-9+/=]{20,}/g, // HTTP Basic credentials
+];
+
+/** Env var names whose *values* must never appear in returned text. */
+const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|_KEY\b|APIKEY|API_KEY/i;
+
+/**
+ * Shortest env value worth redacting by literal match. Anything shorter is
+ * likely a flag or a number, and blanking it would mangle unrelated text.
+ */
+const MIN_SECRET_VALUE_LENGTH = 12;
+
+/**
+ * Redact credentials from a free-form error string.
+ *
+ * Three layers, because pattern matching alone is not enough here. This path
+ * deliberately inherits the full environment (see `buildIntrospectionEnv`), so
+ * the credentials that could surface are arbitrary and not limited to the
+ * shapes Codex itself emits:
+ *
+ *  1. The shared `redactSecrets` patterns.
+ *  2. Common third-party token shapes the shared list omits.
+ *  3. **Literal values** of environment variables whose names look secret.
+ *     This is the strong layer: since the child inherits these values, we know
+ *     exactly what to look for rather than guessing a shape.
  *
  * Remediation URLs are deliberately KEPT. The live capture's most useful
- * failure text was a Slack console link telling the operator exactly how to
- * fix the server; stripping URLs wholesale would throw that away. Credentials
- * embedded in a URL are still caught by the shared secret patterns.
+ * failure text was a Slack console link telling the operator exactly how to fix
+ * the server, and stripping URLs wholesale would throw that away. A credential
+ * embedded in a URL is still caught by layers 1-3.
  */
 export function redactError(text: string): string {
-  return redactSecrets(text);
+  let out = redactSecrets(text);
+
+  for (const pattern of EXTRA_TOKEN_PATTERNS) {
+    out = out.replace(pattern, "[REDACTED]");
+  }
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!value || value.length < MIN_SECRET_VALUE_LENGTH) continue;
+    if (!SECRET_ENV_NAME.test(name)) continue;
+    // split/join rather than RegExp: the value is arbitrary text and would
+    // otherwise need escaping.
+    if (out.includes(value)) out = out.split(value).join("[REDACTED]");
+  }
+
+  return out;
 }
 
 /**
@@ -212,23 +265,75 @@ export function classifyServers(options: {
     });
   }
 
-  // Configured but never reported by the app-server. Distinct from failure.
+  // Configured but never reported by the app-server. Distinct from failure,
+  // but still subject to the notification-wins rule: a server can be missing
+  // from the inventory (a degraded or truncated list) while having emitted a
+  // perfectly good `failed` notification, and dropping that verdict would
+  // throw away the one diagnostic the caller came for.
   const reportedNames = new Set(listed.map((s) => s.name));
   for (const name of configuredNames) {
     if (reportedNames.has(name)) continue;
+    const notification = merged.get(name);
+    const state: ServerState =
+      notification?.status === "failed"
+        ? "failed"
+        : notification?.status === "ready"
+          ? "initialized"
+          : "unknown";
     reports.push({
       name,
       authStatus: null,
       toolCount: 0,
       tools: [],
       resourceCount: 0,
-      state: "unknown",
+      state,
       origin: "configuredButUnreported",
-      note: "declared in config.toml but absent from the app-server inventory",
+      ...(notification ? { startupStatus: notification.status } : {}),
+      ...(notification?.error ? { error: notification.error } : {}),
+      note: notification
+        ? "absent from the app-server inventory; state taken from its startup notification"
+        : "declared in config.toml but absent from the app-server inventory",
     });
   }
 
   return reports.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Names whose most recent notification is `starting`, meaning the server is
+ * mid-boot right now.
+ *
+ * The drain needs this because a server can reach a terminal state in boot
+ * round 1 and then be restarted by round 2. Judging "has this server reported"
+ * on the merged terminal alone would call it settled while round 2 is still in
+ * flight, and a round-1 `failed` followed by a round-2 `ready` would be
+ * returned as `failed`. Tracking the in-flight set is exact, and avoids paying
+ * for a settle window wide enough to cover the slowest possible boot.
+ */
+export function serversStillStarting(
+  notifications: ReadonlyArray<{ method: string; params?: Record<string, unknown> }>,
+  threadId: string | null,
+): Set<string> {
+  const latest = new Map<string, string>();
+  if (threadId === null) return new Set();
+
+  for (const n of notifications) {
+    if (n.method !== "mcpServer/startupStatus/updated") continue;
+    const params = n.params ?? {};
+    const name = params["name"];
+    const status = params["status"];
+    if (typeof name !== "string" || typeof status !== "string") continue;
+    const rawThread = params["threadId"];
+    const thread = typeof rawThread === "string" ? rawThread : NULL_THREAD_KEY;
+    if (thread !== threadId) continue;
+    latest.set(name, status);
+  }
+
+  const starting = new Set<string>();
+  for (const [name, status] of latest) {
+    if (status === "starting") starting.add(name);
+  }
+  return starting;
 }
 
 /** Parse one `McpServerStatus` entry into the shape the reports need. */
