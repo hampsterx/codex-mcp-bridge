@@ -57,6 +57,16 @@ export const reviewAnnotations: ToolAnnotations = {
   openWorldHint: true,
 };
 
+export const mcpStatusAnnotations: ToolAnnotations = {
+  title: "MCP Server Status",
+  readOnlyHint: true,
+  destructiveHint: false,
+  // Spawns a real app-server session that initializes the user's MCP servers,
+  // so repeat calls are not free and results vary with server health.
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
 export const pingAnnotations: ToolAnnotations = {
   title: "Health Check",
   readOnlyHint: true,

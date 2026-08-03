@@ -10,6 +10,7 @@ import { executeQuery } from "./tools/query.js";
 import { executeReview } from "./tools/review.js";
 import { executePing } from "./tools/ping.js";
 import { executeStructured } from "./tools/structured.js";
+import { executeMcpStatus, formatMcpStatus } from "./tools/mcpStatus.js";
 import {
   codexAnnotations,
   searchAnnotations,
@@ -17,6 +18,7 @@ import {
   reviewAnnotations,
   structuredAnnotations,
   listSessionsAnnotations,
+  mcpStatusAnnotations,
   pingAnnotations,
 } from "./annotations.js";
 import { sessionStore } from "./utils/session.js";
@@ -528,6 +530,75 @@ server.registerTool(
       }],
       _meta: buildMeta({ durationMs }),
     };
+  },
+);
+
+// --- mcpStatus tool ---
+
+server.registerTool(
+  "mcpStatus",
+  {
+    title: "MCP Server Status",
+    description: `Report what Codex's own app-server says about each MCP server it knows about: auth type, tool inventory, and whether the server initialized.
+
+Unlike the other tools, this one deliberately does NOT suppress Codex's MCP servers — suppressing them would disable the thing being measured — so it is slower than a normal call and boots the servers named in ~/.codex/config.toml.
+
+Two modes:
+- Default (~6s): inventory only. Reports each server as "initialized" or "unknown". Creates no thread and writes no session record.
+- diagnostics: true (20-50s): starts an ephemeral thread to collect startup notifications, which are the only source of an explicit "failed" state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal).
+
+Reading the output:
+- "unknown" is not a failure. It means the inventory carried no server info and no explicit verdict was available. Only diagnostics mode can report "failed".
+- A "degraded" warning means the underlying call was slow enough that healthy servers have been observed reporting as uninitialized. Treat "unknown" as unproven when it appears.
+- Servers marked "builtIn" are injected by Codex and are not in your config.toml. Servers marked "configuredButUnreported" are in your config.toml but absent from Codex's inventory.`,
+    inputSchema: {
+      diagnostics: z
+        .boolean()
+        .optional()
+        .describe("Start an ephemeral thread to collect startup notifications. Slower, but the only way to get explicit failure states and error text."),
+      workingDirectory: z
+        .string()
+        .optional()
+        .describe("Working directory for the app-server session"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .optional()
+        .describe("Per-request timeout in milliseconds (default: 90000)"),
+    },
+    annotations: mcpStatusAnnotations,
+  },
+  async (input, extra) => {
+    const startTime = Date.now();
+    const heartbeat = maybeStartHeartbeat(
+      extra._meta as { progressToken?: string | number } | undefined,
+      extra.sendNotification as ProgressNotificationSender,
+    );
+    try {
+      const result = await executeMcpStatus(input);
+      return {
+        content: [{ type: "text" as const, text: formatMcpStatus(result) }],
+        _meta: {
+          ...buildMeta({ durationMs: Date.now() - startTime }),
+          degraded: result.degraded,
+          incomplete: result.incomplete,
+          listDurationMs: result.listDurationMs,
+          diagnostics: result.diagnostics,
+          codexVersion: result.codexVersion,
+          servers: result.servers,
+        },
+      };
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${toErrorMessage(e)}` }],
+        isError: true,
+        _meta: buildMeta({ durationMs: Date.now() - startTime }),
+      };
+    } finally {
+      heartbeat.stop();
+    }
   },
 );
 

@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **`mcpStatus` tool: per-server MCP boot state, sourced from Codex's own
+  app-server protocol.** Reports each MCP server Codex knows about with its
+  auth type, tool inventory, and whether it initialized. The default mode costs
+  ~6-9s, creates no thread, and writes no session record. `diagnostics: true`
+  starts an ephemeral thread to collect startup notifications, which are the
+  only source of an explicit `failed` state and the error text naming the cause
+  (expired OAuth grant, missing binary, remote refusal). Unlike every other
+  tool it deliberately does not suppress Codex's MCP servers or harden the
+  subprocess environment, since both would disable the thing being measured, so
+  it boots the servers in `~/.codex/config.toml`.
+
+  Two behaviours are worth knowing before reading its output. **`unknown` is
+  not a failure**: the tool refuses to infer failure from a missing `serverInfo`
+  because a slow underlying call has been measured reporting healthy,
+  explicitly-`ready` servers as uninitialized. It reports how long that call
+  took and flags the result as degraded when it lands in the range where that
+  was observed. And **servers Codex injects itself** (`codex_apps`) are labelled
+  `builtIn` rather than counted as a config mismatch, so the configured-vs-
+  reported diff runs in both directions.
+
 ## [0.9.1] - 2026-08-02
 
 ### Fixed

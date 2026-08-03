@@ -1,0 +1,222 @@
+{
+  "ListMcpServerStatusParams": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "properties": {
+      "cursor": {
+        "description": "Opaque pagination cursor returned by a previous call.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "detail": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/McpServerStatusDetail"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Controls how much MCP inventory data to fetch for each server. Defaults to `Full` when omitted."
+      },
+      "limit": {
+        "description": "Optional page size; defaults to a server-defined value.",
+        "format": "uint32",
+        "minimum": 0.0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "threadId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "ListMcpServerStatusParams",
+    "type": "object"
+  },
+  "ListMcpServerStatusResponse": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "properties": {
+      "data": {
+        "items": {
+          "$ref": "#/definitions/McpServerStatus"
+        },
+        "type": "array"
+      },
+      "nextCursor": {
+        "description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "data"
+    ],
+    "title": "ListMcpServerStatusResponse",
+    "type": "object"
+  },
+  "McpAuthStatus": {
+    "enum": [
+      "unsupported",
+      "notLoggedIn",
+      "bearerToken",
+      "oAuth"
+    ],
+    "type": "string"
+  },
+  "McpServerInfo": {
+    "description": "Presentation metadata advertised by an initialized MCP server.",
+    "properties": {
+      "description": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "icons": {
+        "items": true,
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "version": {
+        "type": "string"
+      },
+      "websiteUrl": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "name",
+      "version"
+    ],
+    "type": "object"
+  },
+  "McpServerStartupFailureReason": {
+    "enum": [
+      "reauthenticationRequired"
+    ],
+    "type": "string"
+  },
+  "McpServerStartupState": {
+    "enum": [
+      "starting",
+      "ready",
+      "failed",
+      "cancelled"
+    ],
+    "type": "string"
+  },
+  "McpServerStatus": {
+    "properties": {
+      "authStatus": {
+        "$ref": "#/definitions/McpAuthStatus"
+      },
+      "name": {
+        "type": "string"
+      },
+      "resourceTemplates": {
+        "items": {
+          "$ref": "#/definitions/ResourceTemplate"
+        },
+        "type": "array"
+      },
+      "resources": {
+        "items": {
+          "$ref": "#/definitions/Resource"
+        },
+        "type": "array"
+      },
+      "serverInfo": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/McpServerInfo"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tools": {
+        "additionalProperties": {
+          "$ref": "#/definitions/Tool"
+        },
+        "type": "object"
+      }
+    },
+    "required": [
+      "authStatus",
+      "name",
+      "resourceTemplates",
+      "resources",
+      "tools"
+    ],
+    "type": "object"
+  },
+  "McpServerStatusDetail": {
+    "enum": [
+      "full",
+      "toolsAndAuthOnly"
+    ],
+    "type": "string"
+  },
+  "McpServerStatusUpdatedNotification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "properties": {
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "failureReason": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/McpServerStartupFailureReason"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "status": {
+        "$ref": "#/definitions/McpServerStartupState"
+      },
+      "threadId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "name",
+      "status"
+    ],
+    "title": "McpServerStatusUpdatedNotification",
+    "type": "object"
+  }
+}

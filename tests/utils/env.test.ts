@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
 import {
+  buildIntrospectionEnv,
   buildSubprocessEnv,
   getMcpServerOverride,
 } from "../../src/utils/env.js";
@@ -441,5 +442,29 @@ describe("getMcpServerOverride", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe("buildIntrospectionEnv", () => {
+  const KEY = "SLACK_USER_TOKEN_TEST_FIXTURE";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("passes through credentials the hardened allowlist would strip", () => {
+    // Regression: MCP servers read credentials from the environment
+    // (bearer_token_env_var / mcp_servers.NAME.env). Under the allowlist
+    // those vanish and introspection reports a fabricated "env var not set"
+    // failure for a server that is healthy in the user's own Codex.
+    process.env[KEY] = "xoxp-fixture-value";
+    expect(buildIntrospectionEnv()[KEY]).toBe("xoxp-fixture-value");
+    expect(buildSubprocessEnv()[KEY]).toBeUndefined();
+  });
+
+  it("still pins colour off, so output stays parseable", () => {
+    const env = buildIntrospectionEnv();
+    expect(env["NO_COLOR"]).toBe("1");
+    expect(env["FORCE_COLOR"]).toBe("0");
   });
 });

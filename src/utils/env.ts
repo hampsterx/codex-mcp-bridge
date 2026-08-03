@@ -165,6 +165,40 @@ export function getApprovalsReviewerOverride(): string[] {
   return ["-c", 'approvals_reviewer="user"'];
 }
 
+/**
+ * Environment for the MCP boot-introspection app-server session.
+ *
+ * Deliberately inherits the full environment instead of the
+ * `ALLOWED_ENV_KEYS` allowlist that `buildSubprocessEnv()` applies. This is
+ * the same reasoning that makes introspection skip `getMcpServerOverride()`:
+ * hardening the child disables the thing being measured.
+ *
+ * Concretely, MCP servers read their credentials from the environment
+ * (`bearer_token_env_var`, `mcp_servers.NAME.env`). Under the allowlist those
+ * variables vanish and the server fails to start, so the tool reports a
+ * fabricated failure ("Environment variable X is not set") for a server that
+ * is perfectly healthy in the user's own Codex. A boot report that invents
+ * failures is worse than no report, because it sends someone chasing a
+ * problem that does not exist.
+ *
+ * Why this is acceptable here, where it would not be for the other tools:
+ *
+ *  - Neither introspection sequence submits a turn, so no environment value
+ *    is ever sent to a model. The allowlist exists to keep secrets out of
+ *    model context, and there is no model in this path.
+ *  - The child MCP servers receive exactly the environment they would get
+ *    from the user running `codex` themselves. That is the measurement.
+ *  - The only text leaving this path is the startup error string, which is
+ *    redacted before it reaches the caller.
+ */
+export function buildIntrospectionEnv(): Record<string, string> {
+  const env: Record<string, string> = { NO_COLOR: "1", FORCE_COLOR: "0" };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 /** Build a minimal, safe environment for Codex CLI subprocesses. */
 export function buildSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {
