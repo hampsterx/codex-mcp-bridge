@@ -96,6 +96,7 @@ export interface McpServerReport {
 export function mergeStartupNotifications(
   notifications: ReadonlyArray<{ method: string; params?: Record<string, unknown> }>,
   threadId: string | null,
+  extraSecrets: readonly string[] = [],
 ): Map<string, MergedNotification> {
   const merged = new Map<string, MergedNotification>();
 
@@ -125,7 +126,7 @@ export function mergeStartupNotifications(
     merged.set(name, {
       status,
       ...(typeof error === "string" && error.length > 0
-        ? { error: redactError(error) }
+        ? { error: redactError(error, extraSecrets) }
         : {}),
     });
   }
@@ -180,16 +181,24 @@ const MIN_SECRET_VALUE_LENGTH = 12;
  * the server, and stripping URLs wholesale would throw that away. A credential
  * embedded in a URL is still caught by layers 1-3.
  */
-export function redactError(text: string): string {
+export function redactError(text: string, extraSecrets: readonly string[] = []): string {
   let out = redactSecrets(text);
 
   for (const pattern of EXTRA_TOKEN_PATTERNS) {
     out = out.replace(pattern, "[REDACTED]");
   }
 
+  const literals: string[] = [];
   for (const [name, value] of Object.entries(process.env)) {
-    if (!value || value.length < MIN_SECRET_VALUE_LENGTH) continue;
-    if (!SECRET_ENV_NAME.test(name)) continue;
+    if (value && SECRET_ENV_NAME.test(name)) literals.push(value);
+  }
+  // Values declared under `[mcp_servers.NAME.env]` in config.toml. Codex
+  // injects those straight into the server process, so they are absent from
+  // the bridge's own environment and the loop above cannot see them.
+  literals.push(...extraSecrets);
+
+  for (const value of literals) {
+    if (value.length < MIN_SECRET_VALUE_LENGTH) continue;
     // split/join rather than RegExp: the value is arbitrary text and would
     // otherwise need escaping.
     if (out.includes(value)) out = out.split(value).join("[REDACTED]");

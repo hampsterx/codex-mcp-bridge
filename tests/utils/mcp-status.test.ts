@@ -431,3 +431,29 @@ describe("redactError, env-value layer", () => {
     expect(out).toContain("https://api.slack.com/apps/");
   });
 });
+
+describe("redactError, config-literal secrets", () => {
+  it("redacts a value declared in config.toml that never reaches process.env", () => {
+    // Codex injects [mcp_servers.NAME.env] values straight into the server
+    // process, so the bridge's own environment cannot supply them and the
+    // pattern layer is the only other defence.
+    const secret = "opaque-config-literal-credential";
+    const out = redactError(`server died: ${secret} rejected`, [secret]);
+    expect(out).not.toContain(secret);
+    expect(out).toContain("[REDACTED]");
+  });
+
+  it("ignores a config literal below the length floor", () => {
+    expect(redactError("mode is dev", ["dev"])).toBe("mode is dev");
+  });
+
+  it("threads config literals through the notification merge", () => {
+    const secret = "another-opaque-config-credential";
+    const merged = mergeStartupNotifications(
+      [note("a", "failed", { error: `auth failed for ${secret}` })],
+      THREAD,
+      [secret],
+    );
+    expect(merged.get("a")?.error).not.toContain(secret);
+  });
+});

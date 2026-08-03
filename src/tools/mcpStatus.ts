@@ -15,7 +15,11 @@
 import { execFileSync } from "node:child_process";
 import { AppServerSession } from "../utils/app-server.js";
 import { findCodexBinary } from "../utils/spawn.js";
-import { readCodexConfig, listMcpServers } from "../utils/codex-config.js";
+import {
+  readCodexConfig,
+  listMcpServers,
+  listMcpServerEnvValues,
+} from "../utils/codex-config.js";
 import {
   DEGRADED_LIST_MS,
   classifyServers,
@@ -91,6 +95,19 @@ function readCodexVersion(): string | null {
   }
 }
 
+/**
+ * Literal credential values from `[mcp_servers.NAME.env]`, for redaction.
+ * Read once per invocation; see `listMcpServerEnvValues` for why these cannot
+ * be found in `process.env`.
+ */
+function configuredEnvSecrets(): string[] {
+  try {
+    return listMcpServerEnvValues(readCodexConfig());
+  } catch {
+    return [];
+  }
+}
+
 function configuredServerNames(): string[] {
   // config.toml directly, not `codex mcp list --json`: synchronous, no
   // subprocess, and it sidesteps that command's undocumented schema and its
@@ -116,6 +133,7 @@ async function drainNotifications(
   threadId: string | null,
   expected: ReadonlySet<string>,
   deadlineMs: number,
+  extraSecrets: readonly string[],
 ): Promise<{ timedOut: boolean }> {
   // Nothing to wait for. Without this the loop would burn the full deadline
   // when the inventory failed and no servers are configured.
@@ -138,7 +156,7 @@ async function drainNotifications(
     for (;;) {
       // Only reached on the diagnostic path, which always has a thread.
       const notifications = session.getNotifications();
-      const merged = mergeStartupNotifications(notifications, threadId);
+      const merged = mergeStartupNotifications(notifications, threadId, extraSecrets);
       const starting = serversStillStarting(notifications, threadId);
       // A server whose most recent notification is `starting` is mid-boot, so
       // its merged terminal is a stale round-1 value, not an answer.
@@ -168,6 +186,7 @@ async function drainNotifications(
 async function fetchInventory(
   session: AppServerSession,
   threadId: string | null,
+  extraSecrets: readonly string[],
 ): Promise<{
   servers: ListedServer[];
   pageCount: number;
@@ -192,7 +211,7 @@ async function fetchInventory(
       // Redacted for the same reason the notification error is: this is
       // free-form text from the same child, and a failing server can echo a
       // credential back into it.
-      incompleteReason = `mcpServerStatus/list failed: ${redactError(JSON.stringify(response.error))}`;
+      incompleteReason = `mcpServerStatus/list failed: ${redactError(JSON.stringify(response.error), extraSecrets)}`;
       break;
     }
     pageCount++;
@@ -232,6 +251,7 @@ export async function executeMcpStatus(
   const startedAt = Date.now();
   const diagnostics = input.diagnostics === true;
   const configured = configuredServerNames();
+  const extraSecrets = configuredEnvSecrets();
   // Read before opening the session: execFileSync blocks for up to 10s, and
   // inside the try it would hold the concurrency slot for that whole time
   // after all real work is done.
@@ -257,7 +277,7 @@ export async function executeMcpStatus(
     if (init.error) {
       // Nothing downstream is meaningful if the handshake was refused.
       throw new Error(
-        `codex app-server rejected initialize: ${redactError(JSON.stringify(init.error))}`,
+        `codex app-server rejected initialize: ${redactError(JSON.stringify(init.error), extraSecrets)}`,
       );
     }
     session.notify("initialized", {});
@@ -275,7 +295,7 @@ export async function executeMcpStatus(
         // without a thread there are no notifications, so no server can be
         // reported `failed` and the caller would not otherwise know why.
         incompleteReason = started.error
-          ? `thread/start failed, so no diagnostic states are available: ${redactError(JSON.stringify(started.error))}`
+          ? `thread/start failed, so no diagnostic states are available: ${redactError(JSON.stringify(started.error), extraSecrets)}`
           : "thread/start returned no thread id, so no diagnostic states are available";
       }
     }
@@ -283,7 +303,7 @@ export async function executeMcpStatus(
     // Fetch the inventory first so the drain has a real expected set: config
     // alone misses built-ins like `codex_apps`, which is reported by the
     // app-server but absent from config.toml.
-    const inventory = await fetchInventory(session, threadId);
+    const inventory = await fetchInventory(session, threadId, extraSecrets);
     if (inventory.incompleteReason) incompleteReason = inventory.incompleteReason;
 
     let drainTimedOut = false;
@@ -300,6 +320,7 @@ export async function executeMcpStatus(
         threadId,
         expected,
         DRAIN_DEADLINE_MS,
+        extraSecrets,
       );
       drainTimedOut = drained.timedOut;
       if (drainTimedOut && !incompleteReason) {
@@ -313,7 +334,7 @@ export async function executeMcpStatus(
     // as well keeps the default path's "never reports failed" contract local
     // and obvious.
     const merged = diagnostics
-      ? mergeStartupNotifications(session.getNotifications(), threadId)
+      ? mergeStartupNotifications(session.getNotifications(), threadId, extraSecrets)
       : new Map<string, MergedNotification>();
 
     const servers = classifyServers({
