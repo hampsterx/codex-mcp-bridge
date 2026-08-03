@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
 import {
+  buildIntrospectionEnv,
   buildSubprocessEnv,
   getMcpServerOverride,
 } from "../../src/utils/env.js";
@@ -440,6 +441,44 @@ describe("getMcpServerOverride", () => {
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("buildIntrospectionEnv", () => {
+  const KEY = "SLACK_USER_TOKEN_TEST_FIXTURE";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("passes through credentials the hardened allowlist would strip", () => {
+    // Regression: MCP servers read credentials from the environment
+    // (bearer_token_env_var / mcp_servers.NAME.env). Under the allowlist
+    // those vanish and introspection reports a fabricated "env var not set"
+    // failure for a server that is healthy in the user's own Codex.
+    process.env[KEY] = "xoxp-fixture-value";
+    expect(buildIntrospectionEnv()[KEY]).toBe("xoxp-fixture-value");
+    expect(buildSubprocessEnv()[KEY]).toBeUndefined();
+  });
+
+  it("pins colour off even when the parent sets the opposite", () => {
+    // Seeding the pins before copying process.env lets an inherited value win,
+    // which puts ANSI escapes into the JSONL stream the parser reads. Asserting
+    // the pins without a competing parent value cannot catch that.
+    const origForce = process.env["FORCE_COLOR"];
+    const origNo = process.env["NO_COLOR"];
+    try {
+      process.env["FORCE_COLOR"] = "1";
+      process.env["NO_COLOR"] = "";
+      const env = buildIntrospectionEnv();
+      expect(env["NO_COLOR"]).toBe("1");
+      expect(env["FORCE_COLOR"]).toBe("0");
+    } finally {
+      if (origForce === undefined) delete process.env["FORCE_COLOR"];
+      else process.env["FORCE_COLOR"] = origForce;
+      if (origNo === undefined) delete process.env["NO_COLOR"];
+      else process.env["NO_COLOR"] = origNo;
     }
   });
 });

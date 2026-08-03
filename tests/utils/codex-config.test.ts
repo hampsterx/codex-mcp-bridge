@@ -8,6 +8,7 @@ import {
   quoteKey,
   resolveCodexConfigPath,
   type ConfiguredServer,
+  listMcpServerEnvValues,
 } from "../../src/utils/codex-config.js";
 
 const FIXTURES = join(process.cwd(), "tests", "fixtures");
@@ -265,5 +266,25 @@ describe("resolveCodexConfigPath", () => {
     } finally {
       if (orig !== undefined) process.env["CODEX_HOME"] = orig;
     }
+  });
+});
+
+describe("listMcpServerEnvValues", () => {
+  it("collects literal values from every server's env table", () => {
+    const values = listMcpServerEnvValues({
+      mcp_servers: {
+        a: { command: "x", env: { TOKEN: "secret-a", OTHER: "plain-a" } },
+        b: { command: "y", env: { KEY: "secret-b" } },
+        c: { command: "z" },
+      },
+    });
+    expect(values.sort()).toEqual(["plain-a", "secret-a", "secret-b"]);
+  });
+
+  it("returns empty for missing, malformed, or env-less config", () => {
+    expect(listMcpServerEnvValues(null)).toEqual([]);
+    expect(listMcpServerEnvValues({})).toEqual([]);
+    expect(listMcpServerEnvValues({ mcp_servers: { a: { env: "nope" } } })).toEqual([]);
+    expect(listMcpServerEnvValues({ mcp_servers: { a: { env: { N: 5 } } } })).toEqual([]);
   });
 });

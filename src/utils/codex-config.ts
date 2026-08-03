@@ -114,6 +114,41 @@ export function listMcpServers(config: CodexConfig | null): ConfiguredServer[] {
 }
 
 /**
+ * Collect literal credential values declared under `[mcp_servers.NAME.env]`.
+ *
+ * Codex injects these straight into the MCP server process, so they never
+ * appear in the bridge's own `process.env` and value-based redaction cannot
+ * see them without reading them here. A server that echoes its own token into
+ * a startup failure would otherwise leak it verbatim whenever that token has
+ * no recognisable prefix for pattern matching to catch.
+ *
+ * Returns every value in those tables rather than only secret-looking keys:
+ * the caller applies a length floor, and over-redacting a stray non-secret
+ * inside an error string is cheap next to leaking a credential.
+ */
+export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
+  if (
+    !config ||
+    !config.mcp_servers ||
+    typeof config.mcp_servers !== "object" ||
+    Array.isArray(config.mcp_servers)
+  ) {
+    return [];
+  }
+
+  const values: string[] = [];
+  for (const entry of Object.values(config.mcp_servers)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const env = (entry as Record<string, unknown>)["env"];
+    if (typeof env !== "object" || env === null || Array.isArray(env)) continue;
+    for (const value of Object.values(env as Record<string, unknown>)) {
+      if (typeof value === "string" && value.length > 0) values.push(value);
+    }
+  }
+  return values;
+}
+
+/**
  * TOML bare keys allow `[A-Za-z0-9_-]`. Anything else must be quoted.
  */
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;

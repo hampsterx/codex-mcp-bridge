@@ -103,6 +103,7 @@ Add to your MCP settings:
 | **query** | Lightweight text analysis. No repo context, no sessions. Runs in an isolated temp directory. |
 | **structured** | JSON Schema validated output via [Ajv](https://ajv.js.org/). Data extraction, classification, or any task needing machine-parseable output. |
 | **ping** | Health check with CLI version, capabilities, and concurrency diagnostics (`activeCount`, `queueDepth`). |
+| **mcpStatus** | Report what Codex says about each MCP server it knows about: auth type, tool inventory, and whether it initialized. Optional diagnostic mode adds explicit failure states and error text. |
 | **listSessions** | List active conversation sessions with metadata (turn count, model, timestamps). |
 
 ### codex
@@ -138,6 +139,34 @@ Key parameters: `prompt` (required), `schema` (required, JSON string), `files`, 
 ### ping
 
 No parameters. Returns CLI version, auth status, model configuration, and concurrency diagnostics (`activeCount`, `queueDepth`).
+
+### mcpStatus
+
+Reports per-server MCP state as Codex's own `app-server` protocol sees it. Unlike every other tool, it deliberately does **not** suppress Codex's MCP servers or harden the subprocess environment, because both would disable the thing being measured. It therefore boots the servers in `~/.codex/config.toml` and is slower than a normal call.
+
+Key parameters: `diagnostics` (default `false`), `workingDirectory`, `timeout` (per-request, default 90s).
+
+| Mode | Cost | What you get |
+|------|------|--------------|
+| default | ~6-9s | Inventory: auth type, tool names and counts, and `initialized` / `unknown` per server. Creates no thread and writes no session record. |
+| `diagnostics: true` | ~10-20s | Adds an explicit `failed` state and the error text naming the cause (expired OAuth grant, missing binary, remote refusal). Starts an ephemeral thread, which is never materialised on disk. |
+
+Reading the output:
+
+- **`unknown` is not a failure.** It means the inventory carried no server info and no explicit verdict was available. Only `diagnostics: true` can report `failed`.
+- **A `degraded` warning means don't trust `unknown`.** Slow calls have been observed reporting healthy servers as uninitialized, so the tool reports how long the underlying call took and flags the result when it was slow enough to be suspect.
+- **`builtIn`** marks a server Codex injects that is not in your config; **`configuredButUnreported`** marks one in your config that Codex never mentioned.
+
+Example:
+
+```text
+atlassian            failed       auth=oAuth  tools=0
+    error: MCP client for `atlassian` failed to start: MCP startup failed: failed to
+    refresh OAuth tokens for server atlassian: ... invalid_grant: Grant not found
+codex_apps           initialized  auth=bearerToken  tools=117  (builtIn)
+linear               initialized  auth=oAuth  tools=57
+serena               initialized  auth=unsupported  tools=22
+```
 
 All tools attach execution metadata (`_meta`) with `durationMs`, `model`, `fallbackUsed`, and session info where applicable. See [DESIGN.md](DESIGN.md) for details.
 

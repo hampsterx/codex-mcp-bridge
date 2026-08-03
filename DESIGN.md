@@ -19,6 +19,33 @@ For code review the bridge has no opinion on prompt content. MCP-only clients ca
 - Kill process group on timeout: SIGTERM, 5s grace period, then SIGKILL
 - `NO_COLOR=1` and `FORCE_COLOR=0` set for every spawn
 
+## Streaming app-server Transport
+
+`mcpStatus` cannot use the spawn path above. That path writes stdin then closes
+it, and buffers all stdout into a string until `close`. `codex app-server` needs
+the opposite: stdin held open for the session, stdout parsed line-by-line as
+JSONL, requests correlated to responses by `id`, and notifications interleaved
+throughout. `src/utils/app-server.ts` is therefore a separate subsystem rather
+than a flag on `spawnCodex`.
+
+- One `AppServerSession` owns one child and holds **one concurrency slot** for
+  its whole lifetime, so introspection competes with `query` / `search` /
+  `review` on the same budget. The slot is released exactly once, including on
+  spawn failure and repeated `close()`.
+- Requests carry their own timeout and drop their pending entry when it fires,
+  so a late response cannot resolve a caller that already gave up.
+- A dead child turns the next stdin write into an EPIPE `error` event. That is
+  handled explicitly: unhandled, it is an uncaught exception that kills the
+  whole bridge rather than the one session.
+- Teardown is SIGTERM, 5s grace, then SIGKILL, against the process group on
+  Unix so the child's own MCP servers go with it.
+
+The protocol is JSON-RPC-shaped but omits `jsonrpc`, and `initialize` requires
+only `clientInfo`. It is experimental upstream, so `tests/utils/appserver-schema-drift.test.ts`
+regenerates the schema from the installed CLI and diffs the definitions the
+bridge parses. See [ADR-002](docs/decisions/002-mcp-introspection-reports-observation-not-health.md)
+for the reporting contract these shapes feed.
+
 ## Output Parsing
 
 Multi-strategy parsing with cascading fallback:

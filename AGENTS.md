@@ -30,6 +30,7 @@ Prompts are assembled in TypeScript and spawned via the CLI. The `search` and `q
 | `query` | Lightweight text analysis (no repo context, no sessions) | 60s |
 | `structured` | JSON Schema validated output (Ajv) | 60s |
 | `ping` | Health check + CLI capability detection | 10s |
+| `mcpStatus` | Per-server MCP boot state via `codex app-server` | 90s/request |
 | `listSessions` | List active Codex conversation sessions | 30s |
 
 ### Codex Tool Details
@@ -78,6 +79,14 @@ Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progr
 - **Explicit env allowlist**, never spread `process.env`
 - Allowed keys: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `CODEX_HOME`, `CODEX_DEFAULT_MODEL`, `HOME`, `PATH`, `USER`, `SHELL`, `LANG`, `TERM`, `XDG_CONFIG_HOME`
 - Always set: `NO_COLOR=1`, `FORCE_COLOR=0`
+- **One deliberate exception**: `buildIntrospectionEnv()` (used only by `mcpStatus`) inherits the full environment. MCP servers read their credentials from it (`bearer_token_env_var`, `mcp_servers.NAME.env`), so under the allowlist they fail to start and the tool reports fabricated failures for healthy servers. Acceptable there because that path submits no turn, so no value reaches a model, and the only text it returns is the redacted startup error. Do not reuse it for any tool that talks to a model.
+
+### MCP Boot Introspection (`mcpStatus`)
+- Drives `codex app-server`, an **experimental** JSONL protocol. Shapes are version-bound; `tests/utils/appserver-schema-drift.test.ts` regenerates the schema from the installed CLI and diffs it against `tests/fixtures/appserver-mcp-schema.json`.
+- Cannot reuse `spawnCodex`: that closes stdin and buffers stdout to a string. `src/utils/app-server.ts` is a separate streaming transport holding one concurrency slot.
+- **`serverInfo` is not a health bit.** Slow list calls have been observed reporting explicitly-`ready` servers as uninitialized, so absence means `unknown` and `failed` comes only from a startup notification.
+- MCP servers boot in **two rounds** per thread, emitting four notifications each; `cancelled` belongs to the superseded first attempt and arrives *before* `ready`. The merge discards `starting` and `cancelled` outright.
+- Full rationale, and the premise that would void the environment exception: `docs/decisions/002-mcp-introspection-reports-observation-not-health.md`.
 
 ### Subprocess Spawning
 - Always `spawn` with `shell: false`, args as array (never `exec`)
