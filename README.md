@@ -243,6 +243,51 @@ The bridge has no opinion on prompt content. See [ADR-001](docs/decisions/001-re
 | `CODEX_CLI_PATH` | `codex` | Path to CLI binary |
 | `CODEX_MAX_CONCURRENT` | `3` | Max concurrent subprocess spawns |
 | `CODEX_MCP_SERVERS` | *(unset)* | Control which Codex internal MCP servers stay enabled. See [DESIGN.md](DESIGN.md#codex-internal-mcp-server-control). |
+| `CODEX_HOME` | `~/.codex` | Root subprocesses authenticate from |
+
+### Running the bridge against a second Codex account
+
+`CODEX_HOME` is a complete identity switch: auth, `config.toml`, skills and
+thread history all live under the root, so a second root is a second install.
+Every tool call this bridge makes is machine traffic rather than a session
+someone is sitting in front of, which makes it a good candidate for a work or
+team seat while interactive `codex` keeps a personal one.
+
+Set it in the server registration rather than the ambient shell, so the choice
+does not depend on which terminal launched the client:
+
+```jsonc
+{
+  "mcpServers": {
+    "codex": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "codex-mcp-bridge"],
+      "env": {
+        "CODEX_HOME": "/home/you/.codex-work",
+        "CODEX_DEFAULT_MODEL": "gpt-5.6-sol"
+      }
+    }
+  }
+}
+```
+
+Three things to know before you do:
+
+- **Log in as that root first**, since a root is only as usable as its
+  credentials: `CODEX_HOME=/home/you/.codex-work codex login` (or
+  `codex login --with-api-key`). Check it with
+  `CODEX_HOME=/home/you/.codex-work codex login status`.
+- **A JSON `env` block has no conditional.** If that root loses its login, every
+  subprocess the bridge spawns targets it anyway, with no fallback to the default
+  root the way a shell wrapper could offer one.
+- **Set `CODEX_DEFAULT_MODEL` alongside it.** The bridge resolves `config.toml`
+  from `CODEX_HOME`, so a freshly created root has none and the model drops to
+  the CLI default. That absence also makes most of `CODEX_MCP_SERVERS` inert:
+  with nothing configured there is nothing to disable, nothing to inherit and no
+  name to enable, which is what the default setting wants anyway. The one mode it
+  does not disarm is a raw TOML override (a value starting `{` or `[`), which is
+  passed straight through as `-c mcp_servers=...` and never reads `config.toml`.
 
 ## Choosing a Codex MCP server
 

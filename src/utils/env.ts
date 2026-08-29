@@ -51,7 +51,7 @@ const ALLOWED_ENV_KEYS = [
  *      This keeps the noisy default path quiet while still honouring the
  *      README contract that required-server drops get surfaced.
  *   2. `"inherit"` (exact, case-sensitive, after trim) → pass through
- *      whatever's in ~/.codex/config.toml unchanged.
+ *      whatever's in $CODEX_HOME/config.toml (default ~/.codex) unchanged.
  *   3. first non-whitespace char is `{` or `[` → raw TOML escape hatch,
  *      passed through as `-c mcp_servers=VALUE`. (Narrowing of the older
  *      "any non-empty non-inherit value is raw TOML" behaviour — the env
