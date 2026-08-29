@@ -541,7 +541,7 @@ server.registerTool(
     title: "MCP Server Status",
     description: `Report what Codex's own app-server says about each MCP server it knows about: auth type, tool inventory, and whether the server initialized.
 
-Unlike the other tools, this one deliberately does NOT suppress Codex's MCP servers — suppressing them would disable the thing being measured — so it is slower than a normal call and boots the servers named in ~/.codex/config.toml.
+Unlike the other tools, this one deliberately does NOT suppress Codex's MCP servers — suppressing them would disable the thing being measured — so it is slower than a normal call and boots the servers named in the config.toml of the root it runs from ($CODEX_HOME, default ~/.codex).
 
 Two modes:
 - Default (~6-9s): inventory only. Reports each server as "initialized" or "unknown". Creates no thread and writes no session record.
