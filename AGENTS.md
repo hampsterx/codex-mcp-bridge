@@ -33,6 +33,34 @@ Prompts are assembled in TypeScript and spawned via the CLI. The `search` and `q
 | `mcpStatus` | Per-server MCP boot state via `codex app-server` | 90s/request |
 | `listSessions` | List active Codex conversation sessions | 30s |
 
+### Picking a tool: match the invocation to the task shape
+
+The three tools differ in startup cost, not just capability, and the expensive one
+is easy to reach for by default.
+
+- **"Review this diff or branch"** → `review`. It runs the git diff and explores the
+  repo itself, which is what it is built for.
+- **"Execute, build or fix something in a repo"** → `codex` with `workingDirectory`.
+  Agentic coding is what the subprocess cost buys.
+- **"Read this and give me your opinion"** (a plan, a design, an argument) → `query`,
+  or inline the relevant snippets in the prompt. Do **not** reach for `codex` with
+  `files` here. Spawning the agentic path pays for sandbox setup, AGENTS.md/CODEX.md
+  reading and env init before any reasoning starts, and that overhead buys nothing
+  when no repo exploration is needed: a plan review with three files inlined at
+  `reasoningEffort: high` spent its whole 60s budget on startup and timed out.
+  Judgment calls want `reasoningEffort: medium`; if the agentic path is genuinely
+  required for an opinion task, raise the timeout to 180-240s and keep input minimal.
+
+**The 3-concurrent cap is a caller's problem, not just a config value.** A workflow
+that fans a verify or review stage out over N items will exceed it whenever N > 3,
+because the harness concurrency cap is far higher. The 4th call waits 30s and then
+returns `Concurrency queue timeout after 30000ms - 3 processes active`, and its
+prompt never reaches Codex at all. That is queue contention, and it is easy to
+misread downstream as a real Codex failure or a missing capability. Chunk the fanned
+stage into groups of 3, or expect some results to come back unavailable and re-run
+those single passes afterwards. Separately, one high-reasoning call with web search
+can hit the 10-minute cap; drop to `reasoningEffort: medium` and tighten the prompt.
+
 ### Codex Tool Details
 
 Supports session resume via `sessionId`. Pass `resetSession: true` to discard an existing session and start fresh. Use `listSessions` to inspect active sessions before resuming.
