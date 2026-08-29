@@ -272,16 +272,22 @@ does not depend on which terminal launched the client:
 }
 ```
 
-Two things to know before you do:
+Three things to know before you do:
 
-- **A JSON `env` block has no conditional.** If that root's `auth.json` goes
-  missing, every subprocess the bridge spawns targets an unauthenticated root,
-  with no fallback to the default root the way a shell wrapper could offer one.
+- **Log in as that root first**, since a root is only as usable as its
+  credentials: `CODEX_HOME=/home/you/.codex-work codex login` (or
+  `codex login --with-api-key`). Check it with
+  `CODEX_HOME=/home/you/.codex-work codex login status`.
+- **A JSON `env` block has no conditional.** If that root loses its login, every
+  subprocess the bridge spawns targets it anyway, with no fallback to the default
+  root the way a shell wrapper could offer one.
 - **Set `CODEX_DEFAULT_MODEL` alongside it.** The bridge resolves `config.toml`
   from `CODEX_HOME`, so a freshly created root has none and the model drops to
-  the CLI default. The same absence makes `CODEX_MCP_SERVERS` inert, which is
-  harmless: with nothing configured there is nothing to disable and no server
-  loads, which is what the default setting wants anyway.
+  the CLI default. That absence also makes most of `CODEX_MCP_SERVERS` inert:
+  with nothing configured there is nothing to disable, nothing to inherit and no
+  name to enable, which is what the default setting wants anyway. The one mode it
+  does not disarm is a raw TOML override (a value starting `{` or `[`), which is
+  passed straight through as `-c mcp_servers=...` and never reads `config.toml`.
 
 ## Choosing a Codex MCP server
 
