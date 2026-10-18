@@ -16,6 +16,8 @@ import {
   mergeProjectServers,
   MAX_PROJECT_CONFIG_BYTES,
   projectRootMarkers,
+  findProjectRoot,
+  MAX_OVERRIDE_ARG_BYTES,
   readProjectConfigText,
   tomlString,
 } from "../../src/utils/codex-config.js";
@@ -322,19 +324,20 @@ describe("listProjectMcpServers", () => {
     writeProjectConfig(join(root, "repo"), '[mcp_servers.inner]\ncommand = "./serve.sh"\nrequired = true\n');
 
     expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
-      { name: "inner", required: true, projectTransport: { key: "command", value: "./serve.sh" } },
+      // A project's required = true never exempts a server: only the user config's does.
+      { name: "inner", required: false, projectTransport: { key: "command", value: "./serve.sh" } },
       { name: "outer", required: false, projectTransport: { key: "url", value: "http://127.0.0.1:1/mcp" } },
     ]);
   });
 
-  it("takes the transport nearest cwd, and required from the farther file when the nearer omits it", () => {
+  it("takes the transport nearest cwd", () => {
     markRoot(root);
     writeProjectConfig(root, '[mcp_servers.dup]\nurl = "http://far"\nrequired = true\n');
     const cwd = join(root, "repo");
     writeProjectConfig(cwd, '[mcp_servers.dup]\ncommand = "near"\n');
 
     expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
-      { name: "dup", required: true, projectTransport: { key: "command", value: "near" } },
+      { name: "dup", required: false, projectTransport: { key: "command", value: "near" } },
     ]);
   });
 
@@ -400,6 +403,20 @@ describe("listProjectMcpServers", () => {
     expect(listProjectMcpServers(cwd, noUserConfig(), ["no-such-marker"]).map((s) => s.name)).toEqual(["inner"]);
   });
 
+  it("checks an absolute marker as given for every ancestor, as Rust's Path::join does", () => {
+    // The marker exists, so Codex stops at cwd and reads nothing above it.
+    // Appending it to each ancestor instead finds it only from `/`.
+    const marker = join(root, "marker");
+    writeFileSync(marker, "");
+    writeProjectConfig(root, '[mcp_servers.outer]\ncommand = "x"\n');
+    const cwd = join(root, "repo");
+    writeProjectConfig(cwd, '[mcp_servers.inner]\ncommand = "x"\n');
+    expect(findProjectRoot(cwd, [marker])).toBe(cwd);
+    expect(listProjectMcpServers(cwd, noUserConfig(), [marker]).map((s) => s.name)).toEqual(["inner"]);
+    // An absolute marker that does not exist matches nowhere.
+    expect(findProjectRoot(cwd, [join(root, "no-such-marker")])).toBeUndefined();
+  });
+
   it("honours custom markers", () => {
     writeProjectConfig(root, '[mcp_servers.outer]\ncommand = "x"\n');
     writeFileSync(join(root, ".hg"), "");
@@ -426,29 +443,64 @@ describe("listProjectMcpServers", () => {
     );
   });
 
-  it("merges a nearer partial entry into a farther declaration, as Codex does", () => {
+  it("ignores a nearer partial entry's required flag, which may come from a layer Codex ignores", () => {
+    // Trusted root, explicitly untrusted subdirectory: Codex drops the sub
+    // layer, so its required = true must not keep the root's server running.
     markRoot(root);
-    writeProjectConfig(root, '[mcp_servers.foo]\ncommand = "far"\n\n[mcp_servers.bar]\ncommand = "b"\nrequired = true\n');
-    const cwd = join(root, "repo");
-    writeProjectConfig(cwd, "[mcp_servers.foo]\nrequired = true\n\n[mcp_servers.bar]\nrequired = false\n");
+    writeProjectConfig(root, '[mcp_servers.shared]\ncommand = "far"\n');
+    const cwd = join(root, "sub");
+    writeProjectConfig(cwd, "[mcp_servers.shared]\nrequired = true\n");
 
     expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
-      { name: "bar", required: false, projectTransport: { key: "command", value: "b" } },
-      { name: "foo", required: true, projectTransport: { key: "command", value: "far" } },
+      { name: "shared", required: false, projectTransport: { key: "command", value: "far" } },
     ]);
   });
 
-  it("skips unparseable files and entries Codex would reject", () => {
+  it("skips entries Codex would reject", () => {
     markRoot(root);
-    writeProjectConfig(root, "[mcp_servers.broken\n");
-    const cwd = join(root, "repo");
     writeProjectConfig(
-      cwd,
+      root,
       '[mcp_servers.no_transport]\nenabled = true\n\n[mcp_servers.ok]\ncommand = "x"\n',
     );
 
-    const names = listProjectMcpServers(cwd, join(root, "home", "config.toml")).map((s) => s.name);
+    const names = listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name);
     expect(names).toEqual(["ok"]);
+  });
+
+  it("fails closed on a project file it cannot parse, naming it and the inherit escape", () => {
+    markRoot(root);
+    writeProjectConfig(root, "[mcp_servers.broken\n");
+    const file = join(root, ".codex", "config.toml");
+
+    expect(() => listProjectMcpServers(join(root), join(root, "home", "config.toml"))).toThrow(
+      new RegExp(`cannot enumerate MCP servers in ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*CODEX_MCP_SERVERS=inherit`),
+    );
+  });
+
+  it("fails closed on a valid project file past the size cap", () => {
+    markRoot(root);
+    writeProjectConfig(
+      root,
+      '[mcp_servers.padded]\ncommand = "x"\n' + "#".repeat(MAX_PROJECT_CONFIG_BYTES),
+    );
+    expect(() => listProjectMcpServers(root, join(root, "home", "config.toml"))).toThrow(
+      /larger than 1048576 bytes/,
+    );
+  });
+
+  it("reads integers past 2^53, which Codex accepts", () => {
+    markRoot(root);
+    writeProjectConfig(
+      root,
+      '[mcp_servers.big]\ncommand = "x"\nstartup_timeout_ms = 9007199254740992\n',
+    );
+    expect(listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name)).toEqual(["big"]);
+  });
+
+  it("treats an absent file, or a .codex that is not a directory, as nothing to read", () => {
+    markRoot(root);
+    writeFileSync(join(root, ".codex"), "not a directory");
+    expect(listProjectMcpServers(root, join(root, "home", "config.toml"))).toEqual([]);
   });
 });
 
@@ -513,6 +565,17 @@ describe("buildMcpArgs with names a -c key path cannot carry", () => {
     expect(args[1]!.split("=")[0]).toBe("mcp_servers");
   });
 
+  it("refuses, with the inherit escape, an override past Linux's one-argument limit", () => {
+    const many: ConfiguredServer[] = Array.from({ length: 4000 }, (_, i) => ({
+      name: `server-${String(i).padStart(5, "0")}`,
+      required: false,
+      projectTransport: { key: "command", value: "/opt/some/long/path/to/an/mcp/server" },
+    }));
+    expect(() => buildMcpArgs(many)).toThrow(
+      new RegExp(`over the ${MAX_OVERRIDE_ARG_BYTES}-byte limit.*CODEX_MCP_SERVERS=inherit`),
+    );
+  });
+
   it("emits nothing when no server needs an entry", () => {
     expect(buildMcpArgs([{ name: "req", required: true }])).toEqual([]);
   });
@@ -539,7 +602,8 @@ describe("readProjectConfigText", () => {
   it(`refuses a file over ${MAX_PROJECT_CONFIG_BYTES} bytes`, () => {
     writeFileSync(join(dir, "big.toml"), "#".repeat(MAX_PROJECT_CONFIG_BYTES + 1));
     writeFileSync(join(dir, "edge.toml"), "#".repeat(MAX_PROJECT_CONFIG_BYTES));
-    expect(readProjectConfigText(join(dir, "big.toml"))).toBeNull();
+    expect(() => readProjectConfigText(join(dir, "big.toml"))).toThrow(/larger than/);
+    expect(readProjectConfigText(join(dir, "missing.toml"))).toBeNull();
     expect(readProjectConfigText(join(dir, "edge.toml"))).toHaveLength(MAX_PROJECT_CONFIG_BYTES);
   });
 
@@ -547,7 +611,7 @@ describe("readProjectConfigText", () => {
   // with it, so the special files are read in a child under a hard deadline.
   // SIGKILL, because vite-node's SIGTERM handler cannot run while it is blocked.
   it.skipIf(process.platform === "win32")(
-    "returns null for a FIFO and for a symlink to /dev/zero without blocking",
+    "refuses a FIFO and a symlink to /dev/zero without blocking",
     () => {
       const fifo = join(dir, "fifo.toml");
       execFileSync("mkfifo", [fifo]);
@@ -557,7 +621,8 @@ describe("readProjectConfigText", () => {
       writeFileSync(
         script,
         `import { readProjectConfigText } from ${JSON.stringify(join(process.cwd(), "src", "utils", "codex-config.ts"))};\n` +
-        `console.log(JSON.stringify(process.argv.slice(2).map((p) => readProjectConfigText(p))));\n`,
+        `const outcome = (p) => { try { return readProjectConfigText(p); } catch (e) { return String(e.message); } };\n` +
+        `console.log(JSON.stringify(process.argv.slice(2).map(outcome)));\n`,
       );
 
       const run = spawnSync(join(process.cwd(), "node_modules", ".bin", "vite-node"), [script, fifo, zero], {
@@ -568,7 +633,10 @@ describe("readProjectConfigText", () => {
 
       expect(run.signal).toBeNull();
       expect(run.status, run.stderr).toBe(0);
-      expect(JSON.parse(run.stdout.trim().split("\n").pop()!)).toEqual([null, null]);
+      expect(JSON.parse(run.stdout.trim().split("\n").pop()!)).toEqual([
+        expect.stringContaining("not a regular file"),
+        expect.stringContaining("not a regular file"),
+      ]);
     },
     40_000,
   );

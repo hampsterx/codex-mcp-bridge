@@ -499,6 +499,16 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     ]);
   });
 
+  it("fails closed on an unreadable project config, except under inherit, which reads nothing", () => {
+    writeFileSync(join(project, ".codex", "config.toml"), "[mcp_servers.broken\n");
+
+    delete process.env["CODEX_MCP_SERVERS"];
+    expect(() => getMcpServerOverride(undefined, { cwd: project })).toThrow(/CODEX_MCP_SERVERS=inherit/);
+
+    process.env["CODEX_MCP_SERVERS"] = "inherit";
+    expect(getMcpServerOverride(undefined, { cwd: project })).toEqual([]);
+  });
+
   it("without cwd, only the user config is enumerated", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     expect(getMcpServerOverride()).toEqual([

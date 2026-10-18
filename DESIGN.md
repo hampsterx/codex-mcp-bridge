@@ -136,7 +136,7 @@ All tools use disable-all by default. The `codex` tool inherits from the `CODEX_
 
 ### Required servers
 
-Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required = true` flag under `[mcp_servers.NAME]`. When set, the bridge refuses to disable that server regardless of `CODEX_MCP_SERVERS` value, and emits a warning to stderr.
+Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required = true` flag under `[mcp_servers.NAME]`. When set in the user config, the bridge refuses to disable that server regardless of `CODEX_MCP_SERVERS` value, and emits a warning to stderr. A project `.codex/config.toml` cannot grant that exemption: the bridge cannot tell which project layers Codex loaded, and an explicitly untrusted subdirectory's `required = true` would otherwise keep a trusted parent's server running. Disabling a server a trusted project marks required starts cleanly (measured on `codex-cli 0.163.0`).
 
 ### Why per-server enumeration, in one table?
 
@@ -152,7 +152,7 @@ Names go inside the value, never in the `-c` key path. Codex's `-c` parser split
 
 Codex loads `[mcp_servers.*]` from a project's `.codex/config.toml` (each directory between the working directory and the project root) when the project is trusted in user config. Trust is matched on the directory itself, the project root (nearest `.git` by default) or the repository root, so trusting a parent such as `/home/me` covers its non-repository subdirectories but not a separate repository below it.
 
-The bridge does not reproduce the trust decision. Every spawning tool passes its working directory, and the bridge reads every `.codex/config.toml` from its realpath (Codex sees the physical path) up to the project root, found as Codex's `discover_project_root` finds it: the nearest ancestor holding any of `project_root_markers` from the user config (default `[".git"]`; a linked worktree's `.git` file counts, a `.git` directory only with a `HEAD`; an empty array, or no marker found, means the working directory alone). That is a superset of what any trust decision loads, and it stops where Codex stops: a file above the root, such as a world-writable `/tmp/.codex/config.toml` over a checkout in `/tmp`, is never loaded by Codex and could otherwise mark a project server `required` and keep it running. Over-enumerating within the root is safe only because of how each project-only server is disabled:
+The bridge does not reproduce the trust decision. Every spawning tool passes its working directory, and the bridge reads every `.codex/config.toml` from its realpath (Codex sees the physical path) up to the project root, found as Codex's `discover_project_root` finds it: the nearest ancestor holding any of `project_root_markers` from the user config (default `[".git"]`; a linked worktree's `.git` file counts, a `.git` directory only with a `HEAD`; an absolute marker is checked as given, as Rust's `Path::join` replaces the base with it; an empty array, or no marker found, means the working directory alone). That is a superset of what any trust decision loads, and it stops where Codex stops: a file above the root, such as a world-writable `/tmp/.codex/config.toml` over a checkout in `/tmp`, is never loaded by Codex and is not read. Over-enumerating within the root is safe only because of how each project-only server is disabled:
 
 ```
 -c mcp_servers={NAME={enabled=false, command="<its own command>"}}
@@ -160,7 +160,11 @@ The bridge does not reproduce the trust decision. Every spawning tool passes its
 
 A bare `enabled=false` for a server Codex did not load (an untrusted project) creates a table with no transport, and Codex refuses to start with `invalid transport`. Re-stating the server's own `command` or `url` keeps the table valid whether or not the layer loaded; the other transport kind fails with `url is not supported for stdio`. A disabled server never spawns, so this cannot start anything the trust gate kept off.
 
-Declarations of one server across several project files are merged per key, nearest file first, as Codex merges layers, so a nearer file that only sets `required = true` still marks it required. Project files are read only if they are regular files (a symlink to one is followed, as Codex follows it) of at most 1 MiB, checked before and after a non-blocking open, because the bridge reads them synchronously before any subprocess timeout starts and a FIFO or `/dev/zero` would otherwise stall or exhaust it.
+Where several project files declare one server, the transport comes from the nearest, as Codex merges nearer layers on top. Project files are read only if they are regular files (a symlink to one is followed, as Codex follows it) of at most 1 MiB, checked before and after a non-blocking open, because the bridge reads them synchronously before any subprocess timeout starts and a FIFO or `/dev/zero` would otherwise stall or exhaust it. Integers are parsed losslessly, since Codex accepts values past 2^53.
+
+**Enumeration fails closed.** A project file that exists on the walk but is rejected (not a regular file, over the cap, unreadable, unparseable) refuses the spawn with an error naming the file, because Codex may load it and its servers would then start unsuppressed. An absent file is a no-op, and `CODEX_MCP_SERVERS=inherit` reads no config at all, so it is the escape hatch. The same holds when the override would exceed Linux's 128 KiB limit on one argument: a clear error instead of a raw `E2BIG` from the spawn.
+
+Enumeration and Codex's own load are separate reads, so a config changed between them is not covered. That race is not closable from outside Codex.
 
 A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.
 

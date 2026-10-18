@@ -24,11 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   table with server names quoted inside the value: Codex's `-c` parser splits
   the key path on `.` and `=` without unquoting, so a server named `my.server`
   (user or project config) made every call fail, and a crafted name could add
-  an enabled server. Partial declarations of one server across several project
-  files are merged as Codex merges them, so a nearer `required = true` holds.
-  Project config files are read only if they are regular files of at most 1 MiB,
-  opened non-blocking, so a FIFO or `/dev/zero` in a repository cannot stall the
-  bridge. An empty `-c mcp_servers={}` still does not suppress anything on
+  an enabled server. A project's `required = true` never exempts a server from
+  suppression (only the user config's does), since the bridge cannot tell
+  which project layers Codex loaded. Project config files are read only if
+  they are regular files of at most 1 MiB, opened non-blocking, so a FIFO or
+  `/dev/zero` in a repository cannot stall the bridge; one that exists but
+  cannot be enumerated refuses the call with an error naming it, pointing at
+  `CODEX_MCP_SERVERS=inherit`, rather than letting its servers start. An empty `-c mcp_servers={}` still does not suppress anything on
   `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added

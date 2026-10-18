@@ -170,8 +170,13 @@ Per-tool defaults: all tools currently use disable-all. The `codex` tool
 inherits from the `CODEX_MCP_SERVERS` env var; explicit caller params win
 over env var wins over tool default.
 
-The `required` flag (codex PR #10902) is read straight from `config.toml`
-and cannot be disabled by any caller.
+The `required` flag (codex PR #10902) is read straight from the user
+`config.toml` and cannot be disabled by any caller. A project
+`.codex/config.toml`'s `required` never exempts a server.
+
+A project config that exists but cannot be enumerated (special file, over
+1 MiB, unreadable, unparseable) refuses the spawn with an error pointing at
+`CODEX_MCP_SERVERS=inherit`, which reads no config.
 
 All of it is emitted as one `-c mcp_servers={...}` inline table with names
 quoted inside the value, never `-c mcp_servers.NAME...`: Codex's `-c` key

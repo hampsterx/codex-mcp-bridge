@@ -20,7 +20,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 export interface CodexConfig {
@@ -56,6 +56,13 @@ export interface McpTransport {
 }
 
 /**
+ * smol-toml rejects integers past 2^53 by default; Codex accepts any i64, so
+ * a valid config (say `startup_timeout_ms = 9007199254740992`) would read as
+ * unparseable. `asNeeded` keeps small integers as numbers.
+ */
+const TOML_OPTIONS = { integersAsBigInt: "asNeeded" } as const;
+
+/**
  * Resolve the path to the user's Codex config.toml.
  * Honors `CODEX_HOME`; falls back to `~/.codex`.
  */
@@ -84,7 +91,7 @@ export function readCodexConfig(path: string = resolveCodexConfigPath()): CodexC
   }
 
   try {
-    return parseToml(raw) as CodexConfig;
+    return parseToml(raw, TOML_OPTIONS) as CodexConfig;
   } catch (err) {
     throw new Error(
       `codex-mcp-bridge: failed to parse ${path}: ${(err as Error).message}. ` +
@@ -197,13 +204,20 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  * keeps the table valid either way, and a disabled server never spawns, so
  * this cannot run anything Codex's trust gate kept off.
  *
- * Declarations are merged per key, nearest file first, as Codex merges nearer
- * layers on top, so a nearer file that only sets `required = true` on a server
- * a farther one declares still counts. The transport is taken from the
- * nearest file declaring a string `command` or `url`, and a server with
- * neither after the merge is skipped: Codex rejects it if it loads it.
- * Files are read through `readProjectConfigText`, which bounds what an
- * untrusted repository can make the bridge read.
+ * The transport is taken from the nearest file declaring a string `command`
+ * or `url`, as Codex merges nearer layers on top, and a server with neither
+ * is skipped: Codex rejects it if it loads it.
+ *
+ * Every result has `required: false`. A project's `required = true` never
+ * exempts a server from suppression, because the bridge cannot tell which
+ * layers Codex loaded: an explicitly untrusted subdirectory's flag would
+ * otherwise keep a trusted parent's server running. Disabling a server a
+ * trusted project marks required starts cleanly (measured on codex-cli
+ * 0.163.0); only the user config's `required` is honoured.
+ *
+ * Fails closed: a file on the walk that exists but cannot be read or parsed
+ * throws (see `readProjectConfigText`), since Codex may load what the bridge
+ * could not enumerate. An absent file is a no-op.
  *
  * @param cwd             Working directory the Codex subprocess will run in.
  * @param userConfigPath  The user config, skipped if the walk reaches it.
@@ -215,7 +229,7 @@ export function listProjectMcpServers(
   markers: readonly string[] = DEFAULT_PROJECT_ROOT_MARKERS,
 ): ConfiguredServer[] {
   const userConfig = canonical(userConfigPath);
-  const byName = new Map<string, { transport?: McpTransport; required?: boolean }>();
+  const byName = new Map<string, McpTransport | undefined>();
 
   const start = canonical(cwd);
   const root = findProjectRoot(start, markers) ?? start;
@@ -223,20 +237,15 @@ export function listProjectMcpServers(
     const file = canonical(join(dir, ".codex", "config.toml"));
     if (file !== userConfig) {
       for (const [name, table] of readProjectServerTables(file)) {
-        const merged = byName.get(name) ?? {};
-        if (merged.transport === undefined) merged.transport = transportOf(table);
-        if (merged.required === undefined && typeof table["required"] === "boolean") {
-          merged.required = table["required"];
-        }
-        byName.set(name, merged);
+        if (byName.get(name) === undefined) byName.set(name, transportOf(table));
       }
     }
     if (dir === root || dirname(dir) === dir) break;
   }
 
   const result: ConfiguredServer[] = [];
-  for (const [name, { transport, required }] of byName) {
-    if (transport) result.push({ name, required: required === true, projectTransport: transport });
+  for (const [name, transport] of byName) {
+    if (transport) result.push({ name, required: false, projectTransport: transport });
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -280,13 +289,14 @@ export function projectRootMarkers(config: CodexConfig | null): readonly string[
  * Codex's `discover_project_root` finds it, or `undefined` when none does, in
  * which case Codex treats `start` as the root. A marker counts when it exists
  * in any form, so a linked worktree's `.git` file counts; a `.git` directory
- * counts only when it has a `HEAD`.
+ * counts only when it has a `HEAD`. An absolute marker is checked as given
+ * for every ancestor, as Rust's `Path::join` replaces the base with it.
  */
 export function findProjectRoot(start: string, markers: readonly string[]): string | undefined {
   if (markers.length === 0) return undefined;
   for (let dir = start; ; dir = dirname(dir)) {
     for (const marker of markers) {
-      const path = join(dir, marker);
+      const path = isAbsolute(marker) ? marker : join(dir, marker);
       if (!pathExists(path)) continue;
       if (marker === ".git" && isDirectory(path) && !pathExists(join(path, "HEAD"))) continue;
       return dir;
@@ -329,10 +339,11 @@ export const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
  * Read a project config without letting the repository stall or exhaust the
  * bridge, which reads it synchronously before any subprocess timeout runs.
  *
- * Only regular files up to `MAX_PROJECT_CONFIG_BYTES` are read; a FIFO, a
- * device such as `/dev/zero` or an oversized file yields `null`. A symlink is
- * followed, because Codex follows it too and refusing it would leave a server
- * Codex loads unsuppressed; the checks apply to its target. The type is
+ * Returns `null` only when the file does not exist. A file that exists but is
+ * not a regular file (a FIFO, a device such as `/dev/zero`), is larger than
+ * `MAX_PROJECT_CONFIG_BYTES`, or cannot be read throws, because Codex may still
+ * load it and its servers would then boot unsuppressed. A symlink is followed,
+ * because Codex follows it too; the checks apply to its target. The type is
  * checked before opening (so a FIFO is never opened for a blocking read) and
  * again on the open descriptor, which is opened non-blocking, so swapping the
  * path between the two cannot get a special file read either.
@@ -340,14 +351,20 @@ export const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
 export function readProjectConfigText(file: string): string | null {
   let fd: number;
   try {
-    if (!statSync(file).isFile()) return null;
+    if (!statSync(file).isFile()) throw projectConfigError(file, "not a regular file");
     fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOCTTY ?? 0));
-  } catch {
-    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    if (code === undefined) throw err;
+    throw projectConfigError(file, (err as Error).message);
   }
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_PROJECT_CONFIG_BYTES) return null;
+    if (!stat.isFile()) throw projectConfigError(file, "not a regular file");
+    if (stat.size > MAX_PROJECT_CONFIG_BYTES) {
+      throw projectConfigError(file, `larger than ${MAX_PROJECT_CONFIG_BYTES} bytes`);
+    }
     // One byte of headroom shows a file that grew past its stat size.
     const buf = Buffer.alloc(stat.size + 1);
     let length = 0;
@@ -355,25 +372,35 @@ export function readProjectConfigText(file: string): string | null {
       const read = readSync(fd, buf, length, buf.length - length, null);
       if (read === 0) break;
       length += read;
-      if (length === buf.length) return null;
+      if (length === buf.length) throw projectConfigError(file, "grew while being read");
     }
     return buf.toString("utf8", 0, length);
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === undefined) throw err;
+    throw projectConfigError(file, (err as Error).message);
   } finally {
     closeSync(fd);
   }
 }
 
-/** The `[mcp_servers.*]` tables of one project config file, or none. */
+/** The fail-closed error for a project config the bridge cannot enumerate. */
+function projectConfigError(file: string, reason: string): Error {
+  return new Error(
+    `codex-mcp-bridge: cannot enumerate MCP servers in ${file}: ${reason}. ` +
+    `Codex may load it, so its servers would start unsuppressed. ` +
+    `Fix or remove the file, or set CODEX_MCP_SERVERS=inherit to bypass MCP server control.`,
+  );
+}
+
+/** The `[mcp_servers.*]` tables of one project config file, or none if it is absent. */
 function readProjectServerTables(file: string): Array<[string, Record<string, unknown>]> {
   const text = readProjectConfigText(file);
   if (text === null) return [];
   let config: CodexConfig;
   try {
-    config = parseToml(text) as CodexConfig;
-  } catch {
-    return [];
+    config = parseToml(text, TOML_OPTIONS) as CodexConfig;
+  } catch (err) {
+    throw projectConfigError(file, (err as Error).message.split("\n")[0] ?? "parse error");
   }
   const servers = config.mcp_servers;
   if (typeof servers !== "object" || servers === null || Array.isArray(servers)) {
@@ -507,5 +534,17 @@ export function buildMcpArgs(
       : "";
     entries.push(`${key}={enabled=false${transport}}`);
   }
-  return entries.length > 0 ? ["-c", `mcp_servers={${entries.join(", ")}}`] : [];
+  if (entries.length === 0) return [];
+  const arg = `mcp_servers={${entries.join(", ")}}`;
+  if (Buffer.byteLength(arg) >= MAX_OVERRIDE_ARG_BYTES) {
+    throw new Error(
+      `codex-mcp-bridge: the MCP server override for ${entries.length} servers is ` +
+      `${Buffer.byteLength(arg)} bytes, over the ${MAX_OVERRIDE_ARG_BYTES}-byte limit Linux puts on ` +
+      `one argument. Set CODEX_MCP_SERVERS=inherit to bypass MCP server control.`,
+    );
+  }
+  return ["-c", arg];
 }
+
+/** Linux's `MAX_ARG_STRLEN`: one argv string, terminating NUL included. */
+export const MAX_OVERRIDE_ARG_BYTES = 128 * 1024;
