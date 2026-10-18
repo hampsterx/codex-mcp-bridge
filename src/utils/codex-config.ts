@@ -183,7 +183,12 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  * server never spawns, so this cannot run anything Codex's trust gate kept off.
  *
  * Unreadable or unparseable files, and entries with no string `command` or
- * `url`, are skipped: Codex reports its own error if it loads them. Where
+ * `url`, are skipped: Codex reports its own error if it loads them. So is a
+ * server whose name is not a TOML bare key, with a warning: Codex's `-c`
+ * parser splits the key path on `.` and the argument on the first `=` with no
+ * unquoting, so `quoteKey`'s quoting reaches it as literal characters and a
+ * name like `my.server` would create a transport-less table that stops every
+ * call from starting, trusted project or not. Where
  * several files declare one name, the one nearest `cwd` supplies the
  * transport (Codex merges nearer layers on top) and `required` is true if
  * any of them says so.
@@ -259,6 +264,13 @@ function readProjectServers(file: string): ConfiguredServer[] {
   const result: ConfiguredServer[] = [];
   for (const [name, entry] of Object.entries(servers)) {
     if (typeof entry !== "object" || entry === null) continue;
+    if (!BARE_KEY.test(name)) {
+      console.warn(
+        `codex-mcp-bridge: not disabling MCP server '${name}' from ${file}: ` +
+        `only names matching [A-Za-z0-9_-] can be addressed by a Codex -c override`,
+      );
+      continue;
+    }
     const table = entry as Record<string, unknown>;
     let projectTransport: McpTransport;
     if (typeof table["command"] === "string") {

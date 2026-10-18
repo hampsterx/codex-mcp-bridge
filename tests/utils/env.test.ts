@@ -496,6 +496,26 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     }
   });
 
+  it("never emits an override for a project name Codex's -c parser would split", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      delete process.env["CODEX_MCP_SERVERS"];
+      // Codex splits `-c` on the first `=` and the path on `.`, without
+      // unquoting: these args made every call from an untrusted repo fail
+      // with "invalid transport" / "invalid type: string".
+      writeFileSync(
+        join(project, ".codex", "config.toml"),
+        '[mcp_servers."my.server"]\ncommand = "x"\n\n[mcp_servers."a=b"]\ncommand = "x"\n',
+      );
+      expect(getMcpServerOverride(undefined, { cwd: project })).toEqual([
+        "-c", "mcp_servers.playwright.enabled=false",
+        "-c", "mcp_servers.serena.enabled=false",
+      ]);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("without cwd, only the user config is enumerated", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     expect(getMcpServerOverride()).toEqual([

@@ -19,7 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   valid when the project is untrusted and Codex never loaded it. Trust rules
   are not reproduced. A project-only server named in `CODEX_MCP_SERVERS` is no
   longer reported as unknown; it is left to Codex's own trust gate rather than
-  force-enabled. A blanket `-c mcp_servers={}` still does not suppress
+  force-enabled. A project server whose name is not a TOML bare key
+  (`[A-Za-z0-9_-]`) is skipped with a warning, because Codex's `-c` parser
+  cannot address it and the override would stop every call from starting. A blanket `-c mcp_servers={}` still does not suppress
   anything on `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added

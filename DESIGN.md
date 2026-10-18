@@ -154,6 +154,8 @@ The bridge does not reproduce that resolution. Every spawning tool passes its wo
 
 A bare `enabled=false` for a server Codex did not load (an untrusted project) creates a table with no transport, and Codex refuses to start with `invalid transport`. Re-stating the server's own `command` or `url` keeps the table valid whether or not the layer loaded; the other transport kind fails with `url is not supported for stdio`. A disabled server never spawns, so this cannot start anything the trust gate kept off.
 
+A project-only server whose name is not a TOML bare key (`[A-Za-z0-9_-]+`) is skipped with a warning and left to Codex. The `-c` parser splits the argument on the first `=` and the key path on `.` without unquoting, so a quoted `"my.server"` reaches it as literal characters, and from an untrusted repository that override alone would stop every call from starting.
+
 A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.
 
 A project-only server named in the selective-enable list gets no override at all. `enabled=true` alone breaks startup when the project is untrusted, and with a transport it would start a server Codex declined to load. It runs only when Codex loaded it and its own config leaves it enabled.

@@ -348,6 +348,29 @@ describe("listProjectMcpServers", () => {
     expect(names).toEqual(["via_target"]);
   });
 
+  it("skips, with a warning, names a Codex -c override cannot address", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const file = join(root, ".codex", "config.toml");
+      writeProjectConfig(
+        root,
+        [
+          '[mcp_servers."my.server"]\ncommand = "x"',
+          '[mcp_servers."a=b"]\ncommand = "x"',
+          "[mcp_servers.'q\"x']\ncommand = \"x\"",
+          '[mcp_servers.ok-name_1]\ncommand = "x"',
+        ].join("\n\n"),
+      );
+
+      const names = listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name);
+      expect(names).toEqual(["ok-name_1"]);
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`'my.server' from ${file}`));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("skips unparseable files and entries Codex would reject", () => {
     writeProjectConfig(root, "[mcp_servers.broken\n");
     const cwd = join(root, "repo");
