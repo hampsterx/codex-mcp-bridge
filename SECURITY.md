@@ -170,6 +170,10 @@ config can quietly overrule it, and config that overrules a security flag fails
 open. Anything added here that grants a capability should be checked for a
 config key that can widen it.
 
+## MCP Server Suppression Scope
+
+The bridge finds a project's root, and so which `.codex/config.toml` files to suppress servers from, using `project_root_markers` from the user, system and Unix managed config files, but not from macOS managed preferences or enterprise cloud config bundles, so an organisation that sets markers only there can leave servers in an ancestor's project config unsuppressed (see [DESIGN.md](DESIGN.md#project-declared-servers)).
+
 ## Output Redaction
 
 CLI output is scanned for sensitive patterns before being returned to the MCP client:

@@ -206,7 +206,11 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  *
  * The transport is taken from the nearest file declaring a string `command`
  * or `url`, as Codex merges nearer layers on top, and a server with neither
- * is skipped: Codex rejects it if it loads it.
+ * is skipped: Codex rejects it if it loads it. Two files on the walk that
+ * declare one server with different kinds (`command` in one, `url` in the
+ * other) fail closed: the bridge cannot tell which layer Codex loads, and
+ * re-stating the wrong kind makes Codex refuse to start
+ * (`url is not supported for stdio`).
  *
  * Every result has `required: false`. A project's `required = true` never
  * exempts a server from suppression, because the bridge cannot tell which
@@ -229,7 +233,7 @@ export function listProjectMcpServers(
   markers: readonly string[] = DEFAULT_PROJECT_ROOT_MARKERS,
 ): ConfiguredServer[] {
   const userConfig = canonical(userConfigPath);
-  const byName = new Map<string, McpTransport | undefined>();
+  const byName = new Map<string, { transport: McpTransport; file: string }>();
 
   const start = canonical(cwd);
   const root = findProjectRoot(start, markers) ?? start;
@@ -237,15 +241,26 @@ export function listProjectMcpServers(
     const file = canonical(join(dir, ".codex", "config.toml"));
     if (file !== userConfig) {
       for (const [name, table] of readProjectServerTables(file)) {
-        if (byName.get(name) === undefined) byName.set(name, transportOf(table));
+        const transport = transportOf(table);
+        if (transport === undefined) continue;
+        const nearer = byName.get(name);
+        if (nearer === undefined) {
+          byName.set(name, { transport, file });
+        } else if (nearer.transport.key !== transport.key) {
+          throw projectConfigError(
+            nearer.file,
+            `MCP server '${name}' is declared with \`${nearer.transport.key}\` here and ` +
+            `\`${transport.key}\` in ${file}, and the bridge cannot tell which layer Codex loads`,
+          );
+        }
       }
     }
     if (dir === root || dirname(dir) === dir) break;
   }
 
   const result: ConfiguredServer[] = [];
-  for (const [name, transport] of byName) {
-    if (transport) result.push({ name, required: false, projectTransport: transport });
+  for (const [name, { transport }] of byName) {
+    result.push({ name, required: false, projectTransport: transport });
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -282,6 +297,65 @@ export function projectRootMarkers(config: CodexConfig | null): readonly string[
     return markers as string[];
   }
   return DEFAULT_PROJECT_ROOT_MARKERS;
+}
+
+/**
+ * The config files Codex merges under and over the user config before it
+ * looks for the project root, on Unix: the system config below the user
+ * config, and the legacy managed config above everything, CLI overrides
+ * included.
+ */
+export interface CodexSystemConfigPaths {
+  system: string;
+  managed: string;
+}
+
+/** Codex 0.163.0's fixed Unix paths for `CodexSystemConfigPaths`. */
+export const CODEX_SYSTEM_CONFIG_PATHS: CodexSystemConfigPaths = {
+  system: "/etc/codex/config.toml",
+  managed: "/etc/codex/managed_config.toml",
+};
+
+/**
+ * The project root markers Codex will use, by its precedence as far as the
+ * bridge can see it: the managed config's `project_root_markers` over the
+ * user config's over the system config's, the last layer declaring the key
+ * winning, as Codex's merge replaces non-table values. The bridge passes no
+ * `-c project_root_markers`, so the CLI layer between user and managed never
+ * applies. Not covered: macOS managed preferences (MDM) and enterprise cloud
+ * config bundles, which are not files, and Windows, where the system config
+ * lives under a resolved ProgramData folder.
+ *
+ * The system and managed files go through the same bounded reader as project
+ * files and fail closed the same way when they exist but cannot be read.
+ *
+ * @param userConfig  The parsed user config.
+ * @param paths       System and managed config files; `null` reads neither
+ *                    (the Windows default).
+ */
+export function effectiveProjectRootMarkers(
+  userConfig: CodexConfig | null,
+  paths: CodexSystemConfigPaths | null = process.platform === "win32" ? null : CODEX_SYSTEM_CONFIG_PATHS,
+): readonly string[] {
+  const layers = paths
+    ? [readSystemConfig(paths.system), userConfig, readSystemConfig(paths.managed)]
+    : [userConfig];
+  let markers: unknown;
+  for (const layer of layers) {
+    if (layer && "project_root_markers" in layer) markers = layer["project_root_markers"];
+  }
+  return projectRootMarkers(markers === undefined ? null : { project_root_markers: markers });
+}
+
+/** A system or managed config file, or `null` if absent; fails closed like a project file. */
+function readSystemConfig(file: string): CodexConfig | null {
+  const text = readProjectConfigText(file);
+  if (text === null) return null;
+  try {
+    return parseToml(text, TOML_OPTIONS) as CodexConfig;
+  } catch (err) {
+    throw projectConfigError(file, (err as Error).message.split("\n")[0] ?? "parse error");
+  }
 }
 
 /**

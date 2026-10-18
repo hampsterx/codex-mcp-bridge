@@ -122,6 +122,28 @@ describe("MCP suppression as Codex parses it", () => {
     expectSuppressed(listServers());
   });
 
+  for (const [label, parentDecl, childDecl] of [
+    ["trusted parent url, untrusted child command", 'url = "http://127.0.0.1:9/mcp"', 'command = "/bin/false"'],
+    ["trusted parent command, untrusted child url", 'command = "/bin/false"', 'url = "http://127.0.0.1:9/mcp"'],
+  ] as const) {
+    maybeIt(`refuses with the named error when layers disagree on transport kind: ${label}`, () => {
+      writeFileSync(path.join(project, ".codex", "config.toml"), `[mcp_servers.shared]\n${parentDecl}\n`);
+      const sub = path.join(project, "sub");
+      mkdirSync(path.join(sub, ".codex"), { recursive: true });
+      writeFileSync(path.join(sub, ".codex", "config.toml"), `[mcp_servers.shared]\n${childDecl}\n`);
+      setTrust(project, "trusted");
+      setTrust(sub, "untrusted");
+
+      // Control: Codex alone loads the parent's server and ignores the child.
+      expect(listServers(false, sub).get("shared")?.enabled).toBe(true);
+      // Re-stating the child's kind would make Codex refuse to start, so the
+      // bridge refuses first, naming both files.
+      expect(() => getMcpServerOverride(undefined, { cwd: sub })).toThrow(
+        /'shared' is declared with `(command|url)` here and `(command|url)` in .*CODEX_MCP_SERVERS=inherit/,
+      );
+    });
+  }
+
   maybeIt("disables a trusted root's server that an untrusted subdirectory marks required", () => {
     // Codex drops the untrusted sub layer, so the root's `shared` loads as an
     // ordinary server; the sub's required flag must not exempt it.

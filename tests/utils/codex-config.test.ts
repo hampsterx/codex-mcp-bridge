@@ -16,6 +16,7 @@ import {
   mergeProjectServers,
   MAX_PROJECT_CONFIG_BYTES,
   projectRootMarkers,
+  effectiveProjectRootMarkers,
   findProjectRoot,
   MAX_OVERRIDE_ARG_BYTES,
   readProjectConfigText,
@@ -330,15 +331,36 @@ describe("listProjectMcpServers", () => {
     ]);
   });
 
-  it("takes the transport nearest cwd", () => {
+  it("takes the transport nearest cwd when the layers agree on its kind", () => {
     markRoot(root);
-    writeProjectConfig(root, '[mcp_servers.dup]\nurl = "http://far"\nrequired = true\n');
+    writeProjectConfig(root, '[mcp_servers.dup]\ncommand = "far"\n');
     const cwd = join(root, "repo");
     writeProjectConfig(cwd, '[mcp_servers.dup]\ncommand = "near"\n');
 
     expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
       { name: "dup", required: false, projectTransport: { key: "command", value: "near" } },
     ]);
+  });
+
+  it.each([
+    ["url above, command below", 'url = "http://far"', 'command = "near"'],
+    ["command above, url below", 'command = "far"', 'url = "http://near"'],
+  ])("fails closed, naming both files, when layers disagree on the transport kind (%s)", (_, far, near) => {
+    markRoot(root);
+    writeProjectConfig(root, `[mcp_servers.shared]\n${far}\n`);
+    const cwd = join(root, "repo");
+    writeProjectConfig(cwd, `[mcp_servers.shared]\n${near}\n`);
+
+    let message = "";
+    try {
+      listProjectMcpServers(cwd, join(root, "home", "config.toml"));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain(join(cwd, ".codex", "config.toml"));
+    expect(message).toContain(join(root, ".codex", "config.toml"));
+    expect(message).toContain("'shared'");
+    expect(message).toContain("CODEX_MCP_SERVERS=inherit");
   });
 
   it("skips the user config when the walk reaches it", () => {
@@ -501,6 +523,61 @@ describe("listProjectMcpServers", () => {
     markRoot(root);
     writeFileSync(join(root, ".codex"), "not a directory");
     expect(listProjectMcpServers(root, join(root, "home", "config.toml"))).toEqual([]);
+  });
+});
+
+describe("effectiveProjectRootMarkers", () => {
+  let dir: string;
+  let paths: { system: string; managed: string };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-config-system-"));
+    paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("falls back to the system config's markers when the user config sets none", () => {
+    writeFileSync(paths.system, 'project_root_markers = [".hg"]\n');
+    expect(effectiveProjectRootMarkers({}, paths)).toEqual([".hg"]);
+    expect(effectiveProjectRootMarkers(null, paths)).toEqual([".hg"]);
+  });
+
+  it("lets the user config override the system config, and managed config override both", () => {
+    writeFileSync(paths.system, 'project_root_markers = [".hg"]\n');
+    const user = { project_root_markers: [".jj"] };
+    expect(effectiveProjectRootMarkers(user, paths)).toEqual([".jj"]);
+    writeFileSync(paths.managed, "project_root_markers = []\n");
+    expect(effectiveProjectRootMarkers(user, paths)).toEqual([]);
+  });
+
+  it("defaults to .git when no layer sets markers or none exists", () => {
+    expect(effectiveProjectRootMarkers({}, paths)).toEqual([".git"]);
+    expect(effectiveProjectRootMarkers({}, null)).toEqual([".git"]);
+  });
+
+  it("fails closed on a system config that exists but cannot be read", () => {
+    writeFileSync(paths.system, "project_root_markers = [\n");
+    expect(() => effectiveProjectRootMarkers({}, paths)).toThrow(
+      new RegExp(`cannot enumerate MCP servers in ${paths.system.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*CODEX_MCP_SERVERS=inherit`),
+    );
+  });
+
+  it("finds the ancestor root a system marker defines, which .git alone would miss", () => {
+    writeFileSync(paths.system, 'project_root_markers = [".hg"]\n');
+    const repo = join(dir, "repo");
+    mkdirSync(join(repo, ".codex"), { recursive: true });
+    writeFileSync(join(repo, ".hg"), "");
+    writeFileSync(join(repo, ".codex", "config.toml"), '[mcp_servers.ancestor]\ncommand = "x"\n');
+    const cwd = join(repo, "sub");
+    mkdirSync(cwd);
+
+    const home = join(dir, "home", "config.toml");
+    expect(listProjectMcpServers(cwd, home, effectiveProjectRootMarkers({}, paths)).map((s) => s.name))
+      .toEqual(["ancestor"]);
+    expect(listProjectMcpServers(cwd, home, effectiveProjectRootMarkers({}, null))).toEqual([]);
   });
 });
 

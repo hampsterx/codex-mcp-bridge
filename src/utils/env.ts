@@ -11,7 +11,7 @@ import {
   listMcpServers,
   listProjectMcpServers,
   mergeProjectServers,
-  projectRootMarkers,
+  effectiveProjectRootMarkers,
   resolveCodexConfigPath,
   buildMcpArgs,
   type ConfiguredServer,
@@ -111,7 +111,7 @@ function configuredServers(cwd: string | undefined): ConfiguredServer[] {
   const config = readCodexConfig();
   const user = listMcpServers(config);
   if (cwd === undefined) return user;
-  const project = listProjectMcpServers(cwd, resolveCodexConfigPath(), projectRootMarkers(config));
+  const project = listProjectMcpServers(cwd, resolveCodexConfigPath(), effectiveProjectRootMarkers(config));
   return mergeProjectServers(user, project);
 }
 
