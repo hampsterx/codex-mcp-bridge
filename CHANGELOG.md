@@ -33,7 +33,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `CODEX_MCP_SERVERS=inherit`, rather than letting its servers start. So do
   two project files declaring one server with different transport kinds.
   `project_root_markers` is read from the system and managed config files as
-  well as the user config, with Codex's precedence. An empty `-c mcp_servers={}` still does not suppress anything on
+  well as the user config, with Codex's precedence (`~` and `~/` markers
+  expanded as Codex expands them), and servers those files declare are
+  suppressed like user servers. An empty `-c mcp_servers={}` still does not suppress anything on
   `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added

@@ -8,10 +8,11 @@
 
 import {
   readCodexConfig,
-  listMcpServers,
+  readNonProjectLayers,
+  listNonProjectMcpServers,
+  markersFromLayers,
   listProjectMcpServers,
   mergeProjectServers,
-  effectiveProjectRootMarkers,
   resolveCodexConfigPath,
   buildMcpArgs,
   type ConfiguredServer,
@@ -106,13 +107,18 @@ export function getMcpServerOverride(
   return enableListedServers(val, silent, cwd);
 }
 
-/** User-config servers, plus project-declared ones when `cwd` is known. */
+/** System, user and managed config servers, plus project-declared ones when `cwd` is known. */
 function configuredServers(cwd: string | undefined): ConfiguredServer[] {
-  const config = readCodexConfig();
-  const user = listMcpServers(config);
-  if (cwd === undefined) return user;
-  const project = listProjectMcpServers(cwd, resolveCodexConfigPath(), effectiveProjectRootMarkers(config));
-  return mergeProjectServers(user, project);
+  const layers = readNonProjectLayers(readCodexConfig());
+  const own = listNonProjectMcpServers(layers);
+  if (cwd === undefined) return own;
+  const project = listProjectMcpServers(
+    cwd,
+    resolveCodexConfigPath(),
+    markersFromLayers(layers),
+    new Set(own.map((s) => s.name)),
+  );
+  return mergeProjectServers(own, project);
 }
 
 /**

@@ -225,12 +225,17 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  *
  * @param cwd             Working directory the Codex subprocess will run in.
  * @param userConfigPath  The user config, skipped if the walk reaches it.
- * @param markers         Project root markers, from `projectRootMarkers()`.
+ * @param markers         Project root markers, from `effectiveProjectRootMarkers()`.
+ * @param exclude         Names a non-project layer declares. Their transport is
+ *                        always loaded and the bridge disables them by name, so
+ *                        project declarations of them are skipped, conflict
+ *                        check included: a project file may be one Codex ignores.
  */
 export function listProjectMcpServers(
   cwd: string,
   userConfigPath: string = resolveCodexConfigPath(),
   markers: readonly string[] = DEFAULT_PROJECT_ROOT_MARKERS,
+  exclude: ReadonlySet<string> = new Set(),
 ): ConfiguredServer[] {
   const userConfig = canonical(userConfigPath);
   const byName = new Map<string, { transport: McpTransport; file: string }>();
@@ -241,6 +246,7 @@ export function listProjectMcpServers(
     const file = canonical(join(dir, ".codex", "config.toml"));
     if (file !== userConfig) {
       for (const [name, table] of readProjectServerTables(file)) {
+        if (exclude.has(name)) continue;
         const transport = transportOf(table);
         if (transport === undefined) continue;
         const nearer = byName.get(name);
@@ -266,7 +272,8 @@ export function listProjectMcpServers(
 }
 
 /**
- * Fold project-declared servers into the user config's list. A name the user
+ * Fold project-declared servers into the non-project list (user, system and
+ * managed config; see `listNonProjectMcpServers`). A name the user
  * config already declares keeps the user entry unchanged, `required` included:
  * the project file may be one Codex never loaded, and an untrusted repository
  * must not be able to keep one of the user's servers running.
@@ -335,16 +342,61 @@ export const CODEX_SYSTEM_CONFIG_PATHS: CodexSystemConfigPaths = {
  */
 export function effectiveProjectRootMarkers(
   userConfig: CodexConfig | null,
-  paths: CodexSystemConfigPaths | null = process.platform === "win32" ? null : CODEX_SYSTEM_CONFIG_PATHS,
+  paths: CodexSystemConfigPaths | null = defaultSystemConfigPaths(),
 ): readonly string[] {
-  const layers = paths
+  return markersFromLayers(readNonProjectLayers(userConfig, paths));
+}
+
+/** `CODEX_SYSTEM_CONFIG_PATHS`, or `null` on Windows, where neither path applies. */
+function defaultSystemConfigPaths(): CodexSystemConfigPaths | null {
+  return process.platform === "win32" ? null : CODEX_SYSTEM_CONFIG_PATHS;
+}
+
+/**
+ * The config layers Codex always loads, whatever the project's trust, in its
+ * merge order: system, user, managed. Missing files are `null`; a system or
+ * managed file that exists but cannot be read fails closed.
+ */
+export function readNonProjectLayers(
+  userConfig: CodexConfig | null,
+  paths: CodexSystemConfigPaths | null = defaultSystemConfigPaths(),
+): Array<CodexConfig | null> {
+  return paths
     ? [readSystemConfig(paths.system), userConfig, readSystemConfig(paths.managed)]
     : [userConfig];
+}
+
+/** `project_root_markers` from the last layer that sets it, as Codex's merge does. */
+export function markersFromLayers(layers: ReadonlyArray<CodexConfig | null>): readonly string[] {
   let markers: unknown;
   for (const layer of layers) {
     if (layer && "project_root_markers" in layer) markers = layer["project_root_markers"];
   }
   return projectRootMarkers(markers === undefined ? null : { project_root_markers: markers });
+}
+
+/**
+ * MCP servers declared by the layers Codex always loads (`readNonProjectLayers`),
+ * which the bridge disables by name like user servers: their transport is
+ * always loaded, so it is never re-stated. `required` is one merged field
+ * across these layers, so it comes from the last layer that sets it, and a
+ * system or managed `required = true` exempts a server as the user's does.
+ */
+export function listNonProjectMcpServers(layers: ReadonlyArray<CodexConfig | null>): ConfiguredServer[] {
+  const required = new Map<string, boolean>();
+  for (const layer of layers) {
+    const servers = layer?.mcp_servers;
+    if (typeof servers !== "object" || servers === null || Array.isArray(servers)) continue;
+    for (const [name, entry] of Object.entries(servers)) {
+      const flag =
+        typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>)["required"] : undefined;
+      if (typeof flag === "boolean") required.set(name, flag);
+      else if (!required.has(name)) required.set(name, false);
+    }
+  }
+  return [...required]
+    .map(([name, isRequired]) => ({ name, required: isRequired }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** A system or managed config file, or `null` if absent; fails closed like a project file. */
@@ -364,19 +416,37 @@ function readSystemConfig(file: string): CodexConfig | null {
  * which case Codex treats `start` as the root. A marker counts when it exists
  * in any form, so a linked worktree's `.git` file counts; a `.git` directory
  * counts only when it has a `HEAD`. An absolute marker is checked as given
- * for every ancestor, as Rust's `Path::join` replaces the base with it.
+ * for every ancestor, as Rust's `Path::join` replaces the base with it, and
+ * so is a home-relative one once expanded (see `expandHome`).
  */
 export function findProjectRoot(start: string, markers: readonly string[]): string | undefined {
   if (markers.length === 0) return undefined;
   for (let dir = start; ; dir = dirname(dir)) {
     for (const marker of markers) {
-      const path = isAbsolute(marker) ? marker : join(dir, marker);
+      const expanded = expandHome(marker);
+      const path = isAbsolute(expanded) ? expanded : join(dir, expanded);
       if (!pathExists(path)) continue;
       if (marker === ".git" && isDirectory(path) && !pathExists(join(path, "HEAD"))) continue;
       return dir;
     }
     if (dirname(dir) === dir) return undefined;
   }
+}
+
+/**
+ * Expand a leading `~` as Codex's `AbsolutePathBuf::join` does: `~` alone is
+ * the home directory, `~/rest` is `rest` under it (extra slashes dropped),
+ * and anything else, `~user` included, is left as it is. Home is `$HOME`,
+ * else the password database, which is what both `os.homedir()` and the
+ * `dirs::home_dir()` Codex uses resolve.
+ */
+export function expandHome(path: string, home: string = homedir()): string {
+  if (path === "~") return home;
+  if (path.startsWith("~/")) return join(home, path.slice(2).replace(/^\/+/, ""));
+  if (process.platform === "win32" && path.startsWith("~\\")) {
+    return join(home, path.slice(2).replace(/^\\+/, ""));
+  }
+  return path;
 }
 
 /** Whether `path` exists, following symlinks, as Codex's metadata lookup does. */

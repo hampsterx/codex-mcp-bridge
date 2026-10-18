@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -143,6 +143,42 @@ describe("MCP suppression as Codex parses it", () => {
       );
     });
   }
+
+  maybeIt("leaves a user server's transport to the user config when project layers disagree on it", () => {
+    writeFileSync(path.join(home, "config.toml"), '\n\n[mcp_servers.shared]\ncommand = "/bin/false"\n', { flag: "a" });
+    writeFileSync(path.join(project, ".codex", "config.toml"), '[mcp_servers.shared]\ncommand = "/bin/false"\n');
+    const sub = path.join(project, "sub");
+    mkdirSync(path.join(sub, ".codex"), { recursive: true });
+    writeFileSync(path.join(sub, ".codex", "config.toml"), '[mcp_servers.shared]\nurl = "http://127.0.0.1:9/mcp"\n');
+    setTrust(project, "trusted");
+    setTrust(sub, "untrusted");
+
+    expect(listServers(false, sub).get("shared")?.enabled, "control: shared loads").toBe(true);
+    process.env["CODEX_MCP_SERVERS"] = "";
+    expect(listServers(true, sub).get("shared")?.enabled).toBe(false);
+    process.env["CODEX_MCP_SERVERS"] = "shared";
+    expect(listServers(true, sub).get("shared")?.enabled).toBe(true);
+  });
+
+  maybeIt("does not read an ancestor's project config when a ~ marker makes cwd the root", () => {
+    // A literal `~` directory at the project root: Codex expands the marker
+    // to $HOME, which exists, so the root is cwd and `anc` never loads.
+    const userConfig = path.join(home, "config.toml");
+    // Top-level key, so it goes before the existing tables.
+    writeFileSync(userConfig, `project_root_markers = ["~"]\n\n${readFileSync(userConfig, "utf8")}`);
+    writeFileSync(path.join(project, ".codex", "config.toml"), '[mcp_servers.anc]\nurl = "http://127.0.0.1:9/mcp"\n');
+    mkdirSync(path.join(project, "~"));
+    const sub = path.join(project, "sub");
+    mkdirSync(path.join(sub, ".codex"), { recursive: true });
+    writeFileSync(path.join(sub, ".codex", "config.toml"), '[mcp_servers.anc]\ncommand = "/bin/false"\n');
+    setTrust(project, "trusted");
+    setTrust(sub, "trusted");
+
+    // Control: Codex loads only the sub layer, so `anc` is the stdio one.
+    expect(listServers(false, sub).get("anc")?.transport?.command).toBe("/bin/false");
+    // Walking up to the literal `~` would see the parent's `url` and refuse.
+    expect(listServers(true, sub).get("anc")?.enabled).toBe(false);
+  });
 
   maybeIt("disables a trusted root's server that an untrusted subdirectory marks required", () => {
     // Codex drops the untrusted sub layer, so the root's `shared` loads as an

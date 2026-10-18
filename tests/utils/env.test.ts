@@ -509,6 +509,37 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     expect(getMcpServerOverride(undefined, { cwd: project })).toEqual([]);
   });
 
+  it.each([
+    ["a plain user server", "", undefined, 'mcp_servers={shared={enabled=false}}'],
+    ["a required user server", "required = true\n", undefined, null],
+    ["an explicitly enabled user server", "", "shared", 'mcp_servers={shared={enabled=true}}'],
+  ])("leaves %s to the user config when project layers disagree on its transport", (_, extra, enable, expected) => {
+    // User `shared`, trusted-parent `command`, ignored untrusted child `url`:
+    // the project declarations of a user-declared name are never read, so
+    // their conflict cannot refuse the call.
+    const home = join(project, "home");
+    mkdirSync(home);
+    writeFileSync(join(home, "config.toml"), `[mcp_servers.shared]\ncommand = "/bin/false"\n${extra}`);
+    process.env["CODEX_HOME"] = home;
+    mkdirSync(join(project, ".git"));
+    writeFileSync(join(project, ".git", "HEAD"), "ref: refs/heads/master\n");
+    writeFileSync(join(project, ".codex", "config.toml"), '[mcp_servers.shared]\ncommand = "/bin/false"\n');
+    const child = join(project, "child");
+    mkdirSync(join(child, ".codex"), { recursive: true });
+    writeFileSync(join(child, ".codex", "config.toml"), '[mcp_servers.shared]\nurl = "http://127.0.0.1:9/mcp"\n');
+    if (enable) process.env["CODEX_MCP_SERVERS"] = enable;
+    else delete process.env["CODEX_MCP_SERVERS"];
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(getMcpServerOverride(undefined, { cwd: child })).toEqual(expected === null ? [] : ["-c", expected]);
+      // Also the explicit-empty path.
+      expect(() => getMcpServerOverride("", { cwd: child })).not.toThrow();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("without cwd, only the user config is enumerated", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     expect(getMcpServerOverride()).toEqual([

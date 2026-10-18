@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,10 @@ import {
   projectRootMarkers,
   effectiveProjectRootMarkers,
   findProjectRoot,
+  expandHome,
+  readNonProjectLayers,
+  listNonProjectMcpServers,
+  markersFromLayers,
   MAX_OVERRIDE_ARG_BYTES,
   readProjectConfigText,
   tomlString,
@@ -578,6 +582,107 @@ describe("effectiveProjectRootMarkers", () => {
     expect(listProjectMcpServers(cwd, home, effectiveProjectRootMarkers({}, paths)).map((s) => s.name))
       .toEqual(["ancestor"]);
     expect(listProjectMcpServers(cwd, home, effectiveProjectRootMarkers({}, null))).toEqual([]);
+  });
+});
+
+describe("system and managed config servers", () => {
+  let dir: string;
+  let paths: { system: string; managed: string };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-config-sysservers-"));
+    paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lists them like user servers, required from the last layer that sets it", () => {
+    writeFileSync(paths.system, '[mcp_servers.sys]\nurl = "http://h"\nrequired = true\n\n[mcp_servers.both]\ncommand = "x"\nrequired = true\n');
+    writeFileSync(paths.managed, '[mcp_servers.both]\nrequired = false\n\n[mcp_servers.mgd]\ncommand = "m"\n');
+    const user = { mcp_servers: { mine: { command: "u" } } };
+
+    expect(listNonProjectMcpServers(readNonProjectLayers(user, paths))).toEqual([
+      { name: "both", required: false },
+      { name: "mgd", required: false },
+      { name: "mine", required: false },
+      { name: "sys", required: true },
+    ]);
+  });
+
+  it("disables a system server by name, never re-stating an ignored project layer's transport", () => {
+    // A system HTTP server and an ignored project layer declaring the same
+    // name with `command`: re-stating the command made Codex refuse to
+    // start ("url is not supported for stdio").
+    writeFileSync(paths.system, '[mcp_servers.shared]\nurl = "http://127.0.0.1:9/mcp"\n');
+    const repo = join(dir, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/master\n");
+    mkdirSync(join(repo, ".codex"));
+    writeFileSync(join(repo, ".codex", "config.toml"), '[mcp_servers.shared]\ncommand = "/bin/false"\n');
+
+    // The same composition `getMcpServerOverride` uses, with injected paths.
+    const layers = readNonProjectLayers({}, paths);
+    const own = listNonProjectMcpServers(layers);
+    const project = listProjectMcpServers(
+      repo, join(dir, "home", "config.toml"), markersFromLayers(layers), new Set(own.map((s) => s.name)),
+    );
+    expect(buildMcpArgs(mergeProjectServers(own, project))).toEqual([
+      "-c", "mcp_servers={shared={enabled=false}}",
+    ]);
+  });
+});
+
+describe("expandHome", () => {
+  it("expands ~ and ~/rest as Codex's AbsolutePathBuf::join does, and nothing else", () => {
+    expect(expandHome("~", "/h")).toBe("/h");
+    expect(expandHome("~/a/b", "/h")).toBe("/h/a/b");
+    expect(expandHome("~//a", "/h")).toBe("/h/a");
+    expect(expandHome("~/", "/h")).toBe("/h");
+    expect(expandHome("~user/a", "/h")).toBe("~user/a");
+    expect(expandHome("a/~", "/h")).toBe("a/~");
+    expect(expandHome(".git", "/h")).toBe(".git");
+  });
+});
+
+describe("findProjectRoot with home-relative markers", () => {
+  let root: string;
+  const origHome = process.env["HOME"];
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "codex-config-home-")));
+    mkdirSync(join(root, "home"));
+    process.env["HOME"] = join(root, "home");
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    if (origHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = origHome;
+  });
+
+  it("checks ~ against the home directory, not a literal ~ directory in the tree", () => {
+    const proj = join(root, "proj");
+    mkdirSync(join(proj, "~"), { recursive: true });
+    mkdirSync(join(proj, ".codex"));
+    writeFileSync(join(proj, ".codex", "config.toml"), '[mcp_servers.anc]\ncommand = "x"\n');
+    const cwd = join(proj, "sub");
+    mkdirSync(cwd);
+
+    // Home exists, so the first ancestor, cwd itself, is the root.
+    expect(findProjectRoot(cwd, ["~"])).toBe(cwd);
+    expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"), ["~"])).toEqual([]);
+  });
+
+  it("finds no root for an absent home-relative marker, even with a literal match in the tree", () => {
+    const proj = join(root, "proj");
+    mkdirSync(join(proj, "~", "mark"), { recursive: true });
+    const cwd = join(proj, "sub");
+    mkdirSync(cwd);
+    expect(findProjectRoot(cwd, ["~/mark"])).toBeUndefined();
+    writeFileSync(join(root, "home", "mark"), "");
+    expect(findProjectRoot(cwd, ["~/mark"])).toBe(cwd);
   });
 });
 
