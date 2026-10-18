@@ -174,7 +174,7 @@ config key that can widen it.
 
 The bridge finds a project's root, and so which `.codex/config.toml` files to suppress servers from, using `project_root_markers` from the user, system and Unix managed config files, but not from macOS managed preferences or enterprise cloud config bundles, so an organisation that sets markers only there can leave servers in an ancestor's project config unsuppressed (see [DESIGN.md](DESIGN.md#project-declared-servers)).
 
-Managed config (`/etc/codex/managed_config.toml`) is admin policy that Codex applies above every CLI override, so the bridge can neither suppress a server it enables nor enable one it disables; the bridge warns on stderr when that happens and runs the call as policy dictates.
+Managed config (`/etc/codex/managed_config.toml`) is admin policy that Codex applies above every CLI override, so the bridge can neither suppress a server it enables nor enable one it disables, and runs the call as policy dictates. In the disable-all and selective-enable modes, unless `silent`, it warns on stderr, at most once per direction per spawn; raw TOML and `inherit` modes do not warn.
 
 ## Output Redaction
 

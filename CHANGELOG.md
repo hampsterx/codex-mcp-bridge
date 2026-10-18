@@ -36,8 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   well as the user config, with Codex's precedence (`~` and `~/` markers
   expanded as Codex expands them), and servers those files declare are
   suppressed like user servers. Managed config outranks `-c`, so where it
-  sets `enabled` against the bridge's override the bridge warns once per call
-  and leaves the policy in force. An empty `-c mcp_servers={}` still does not suppress anything on
+  sets `enabled` against the bridge's override the bridge leaves the policy in
+  force and, in the disable-all and selective-enable modes unless `silent`,
+  warns at most once per direction per call. An empty `-c mcp_servers={}` still does not suppress anything on
   `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added
