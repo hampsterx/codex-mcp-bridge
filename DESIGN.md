@@ -117,7 +117,7 @@ Implemented in `src/utils/progress.ts`.
 
 ## Codex Internal MCP Server Control
 
-When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`) would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
+When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`), or in the `.codex/config.toml` of a trusted project around the spawn's working directory, would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
 
 ### Grammar
 
@@ -140,7 +140,23 @@ Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required 
 
 ### Why per-server enumeration?
 
-A blanket `-c mcp_servers={}` override silently no-ops on older Codex versions: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045)). Per-server `enabled=false` is the only reliable disable path.
+A blanket `-c mcp_servers={}` override silently no-ops: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045), still true on `codex-cli 0.163.0`, for user and project servers alike). Per-server `enabled=false` is the only reliable disable path.
+
+### Project-declared servers
+
+Codex loads `[mcp_servers.*]` from a project's `.codex/config.toml` (each directory between the working directory and the project root) when the project is trusted in user config. Trust is matched on the directory itself, the project root (nearest `.git` by default) or the repository root, so trusting a parent such as `/home/me` covers its non-repository subdirectories but not a separate repository below it.
+
+The bridge does not reproduce that resolution. Every spawning tool passes its working directory, and the bridge reads every `.codex/config.toml` from there up to the filesystem root, a superset of what any trust decision loads. Over-enumerating is safe only because of how each project-only server is disabled:
+
+```
+-c mcp_servers.NAME.enabled=false -c mcp_servers.NAME.command="<its own command>"
+```
+
+A bare `enabled=false` for a server Codex did not load (an untrusted project) creates a table with no transport, and Codex refuses to start with `invalid transport`. Re-stating the server's own `command` or `url` keeps the table valid whether or not the layer loaded; the other transport kind fails with `url is not supported for stdio`. A disabled server never spawns, so this cannot start anything the trust gate kept off.
+
+A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.
+
+A project-only server named in the selective-enable list gets no override at all. `enabled=true` alone breaks startup when the project is untrusted, and with a transport it would start a server Codex declined to load. It runs only when Codex loaded it and its own config leaves it enabled.
 
 ## Prompt Templates
 

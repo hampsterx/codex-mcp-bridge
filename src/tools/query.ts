@@ -65,7 +65,7 @@ export async function executeQuery(input: QueryInput): Promise<QueryResult> {
           "--skip-git-repo-check",
           "--ephemeral",
           // Disable all non-required MCP servers
-          ...getMcpServerOverride("", { silent: true }),
+          ...getMcpServerOverride("", { silent: true, cwd: tempDir }),
         ];
         if (m) args.push(`--model=${m}`);
         if (reasoningEffort) args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);

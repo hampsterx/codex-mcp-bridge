@@ -6,7 +6,14 @@
  * risks leaking unintended config).
  */
 
-import { readCodexConfig, listMcpServers, buildMcpArgs } from "./codex-config.js";
+import {
+  readCodexConfig,
+  listMcpServers,
+  listProjectMcpServers,
+  mergeProjectServers,
+  buildMcpArgs,
+  type ConfiguredServer,
+} from "./codex-config.js";
 
 const ALLOWED_ENV_KEYS = [
   // OpenAI / Codex auth
@@ -39,9 +46,11 @@ const ALLOWED_ENV_KEYS = [
  *   1. unset / empty / whitespace-only → disable every configured server
  *      except those marked `required=true` (default, fastest). Enumerates
  *      per-server via `-c mcp_servers.NAME.enabled=false`. A blanket
- *      `mcp_servers={}` override silently no-ops on older Codex due to
- *      config-merge semantics (upstream #16045), so enumeration is the
- *      only reliable path.
+ *      `mcp_servers={}` override silently no-ops due to config-merge
+ *      semantics (upstream #16045, still true on Codex 0.163.0), so
+ *      enumeration is the only reliable path. "Configured" covers the user
+ *      config and, when `cwd` is given, project `.codex/config.toml` files
+ *      above it (see `listProjectMcpServers`).
  *
  *      Truly unset (no `override`, no env var) stays silent about required
  *      servers being kept on. An **explicit** empty/whitespace value —
@@ -73,10 +82,13 @@ const ALLOWED_ENV_KEYS = [
  *                  required" warnings. Set by callers passing an implicit
  *                  tool default so users who never asked for a list don't
  *                  get yelled at for the bridge's internal preferences.
+ * @param options.cwd  Working directory the subprocess will spawn in. Every
+ *                  spawning tool passes it; without it, servers declared in a
+ *                  trusted project's `.codex/config.toml` boot unsuppressed.
  */
 export function getMcpServerOverride(
   override?: string,
-  { silent = false }: { silent?: boolean } = {},
+  { silent = false, cwd }: { silent?: boolean; cwd?: string } = {},
 ): string[] {
   const envValue = process.env["CODEX_MCP_SERVERS"];
   // "Explicit" means the caller or the env var provided a value (even if it's
@@ -85,10 +97,16 @@ export function getMcpServerOverride(
   const raw = override !== undefined ? override : envValue;
   const val = raw?.trim() ?? "";
 
-  if (val === "") return disableNonRequiredServers(explicit, silent);
+  if (val === "") return disableNonRequiredServers(explicit, silent, cwd);
   if (val === "inherit") return [];
   if (val[0] === "{" || val[0] === "[") return rawTomlOverride(val);
-  return enableListedServers(val, silent);
+  return enableListedServers(val, silent, cwd);
+}
+
+/** User-config servers, plus project-declared ones when `cwd` is known. */
+function configuredServers(cwd: string | undefined): ConfiguredServer[] {
+  const user = listMcpServers(readCodexConfig());
+  return cwd === undefined ? user : mergeProjectServers(user, listProjectMcpServers(cwd));
 }
 
 /**
@@ -96,8 +114,12 @@ export function getMcpServerOverride(
  * When `explicit` is true and `silent` is false, warnings are emitted
  * for required servers that cannot be disabled.
  */
-function disableNonRequiredServers(explicit: boolean, silent: boolean): string[] {
-  const configured = listMcpServers(readCodexConfig());
+function disableNonRequiredServers(
+  explicit: boolean,
+  silent: boolean,
+  cwd: string | undefined,
+): string[] {
+  const configured = configuredServers(cwd);
   if (explicit && !silent) {
     return buildMcpArgs(configured, new Set<string>());
   }
@@ -113,14 +135,13 @@ function rawTomlOverride(val: string): string[] {
  * Parse a comma-separated list of server names to enable.
  * Unknown names are warned (unless silent) and dropped.
  */
-function enableListedServers(val: string, silent: boolean): string[] {
+function enableListedServers(val: string, silent: boolean, cwd: string | undefined): string[] {
   const requested = val
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const config = readCodexConfig();
-  const configured = listMcpServers(config);
+  const configured = configuredServers(cwd);
   const configuredNames = new Set(configured.map((s) => s.name));
 
   const enabled = new Set<string>();

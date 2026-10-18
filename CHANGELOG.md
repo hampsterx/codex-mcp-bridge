@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP servers declared in a trusted project's `.codex/config.toml` are now
+  suppressed too.** Codex loads that layer for a trusted working directory,
+  and the bridge only enumerated
+  `$CODEX_HOME/config.toml`, so a project server booted on every `codex`,
+  `search` or `structured` call made inside that project, regardless of
+  `CODEX_MCP_SERVERS`. The bridge now reads every `.codex/config.toml` from the
+  working directory up to the filesystem root and disables those servers as
+  well, re-stating each one's own `command` or `url` so the override stays
+  valid when the project is untrusted and Codex never loaded it. Trust rules
+  are not reproduced. A project-only server named in `CODEX_MCP_SERVERS` is no
+  longer reported as unknown; it is left to Codex's own trust gate rather than
+  force-enabled. A blanket `-c mcp_servers={}` still does not suppress
+  anything on `codex-cli 0.163.0`, so per-server enumeration stays.
+
 ### Added
 
 - **`mcpStatus` tool: per-server MCP boot state, sourced from Codex's own

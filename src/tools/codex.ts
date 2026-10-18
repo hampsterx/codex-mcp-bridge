@@ -142,6 +142,7 @@ export async function executeCodex(input: CodexInput): Promise<CodexResult> {
           prompt: useStdin ? undefined : fullPrompt,
           outputFile,
           imagePaths: validImages.map((image) => image.resolved),
+          cwd,
         });
         return spawnCodex({ args, cwd, stdin: useStdin ? fullPrompt : undefined, timeout: t });
       },
@@ -234,6 +235,8 @@ interface BuildArgsInput {
   prompt?: string;
   outputFile?: string;
   imagePaths?: string[];
+  /** Spawn cwd, so MCP suppression covers the project's own config. */
+  cwd?: string;
 }
 
 /**
@@ -285,8 +288,8 @@ function pushSandbox(args: string[], sandbox: BuildArgsInput["sandbox"]): void {
  * `exec` and otherwise swallows the prompt as another image path.
  */
 export function buildArgs(input: BuildArgsInput): string[] {
-  const { model, sandbox, reasoningEffort, conversationId, prompt, outputFile, imagePaths = [] } = input;
-  const args: string[] = ["exec", "--json", ...getMcpServerOverride()];
+  const { model, sandbox, reasoningEffort, conversationId, prompt, outputFile, imagePaths = [], cwd } = input;
+  const args: string[] = ["exec", "--json", ...getMcpServerOverride(undefined, { cwd })];
 
   if (conversationId) {
     // Resume path: config flags before subcommand args

@@ -152,8 +152,9 @@ Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progr
 
 ### `CODEX_MCP_SERVERS` grammar
 
-Controls which MCP servers from `~/.codex/config.toml` stay enabled inside
-the Codex subprocess. Branches evaluated top-to-bottom:
+Controls which MCP servers from `~/.codex/config.toml`, and from any project
+`.codex/config.toml` at or above the spawn's working directory, stay enabled
+inside the Codex subprocess. Branches evaluated top-to-bottom:
 
 1. **unset / empty / whitespace** → disable every configured server except
    those marked `required = true` in config.toml.
@@ -169,7 +170,13 @@ inherits from the `CODEX_MCP_SERVERS` env var; explicit caller params win
 over env var wins over tool default.
 
 The `required` flag (codex PR #10902) is read straight from `config.toml`
-and cannot be disabled by any caller. Parsed synchronously, no per-spawn
+and cannot be disabled by any caller.
+
+Project-only servers are disabled with their own `command`/`url` re-stated,
+because a bare `enabled=false` for a server Codex did not load (untrusted
+project) makes Codex refuse to start. Named in the enable list, they get no
+override and run only if Codex trusted the project. Rationale: DESIGN.md §
+Project-declared servers. Parsed synchronously, no per-spawn
 subprocess cost. The grammar narrowed in this release: old builds accepted
 any non-empty non-`inherit` value as raw TOML; now only values starting with
 `{` or `[` do. Unreleased env var, non-breaking.

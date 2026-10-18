@@ -102,7 +102,7 @@ export async function executeStructured(input: StructuredInput): Promise<Structu
   const { result, fallbackUsed, fallbackModel } = await withModelFallback(
     model,
     (m, t) => {
-      const args: string[] = ["exec", ...getMcpServerOverride()];
+      const args: string[] = ["exec", ...getMcpServerOverride(undefined, { cwd })];
       if (m) args.push(`--model=${m}`);
       // The pin keeps `read-only` binding; user config can otherwise hand
       // escalation approval to a model instead of a human.

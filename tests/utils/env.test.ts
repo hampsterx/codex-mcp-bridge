@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildIntrospectionEnv,
@@ -442,6 +444,64 @@ describe("getMcpServerOverride", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe("getMcpServerOverride with a project .codex/config.toml", () => {
+  const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+  const origCodexHome = process.env["CODEX_HOME"];
+  let project: string;
+
+  beforeEach(() => {
+    project = mkdtempSync(join(tmpdir(), "codex-mcp-project-"));
+    mkdirSync(join(project, ".codex"));
+    writeFileSync(
+      join(project, ".codex", "config.toml"),
+      '[mcp_servers.projfake]\ncommand = "./fake-mcp.sh"\n\n[mcp_servers.serena]\ncommand = "uv"\n',
+    );
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-stdio");
+  });
+
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true });
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  it("default mode: disables a server only the project declares, keeping its transport", () => {
+    delete process.env["CODEX_MCP_SERVERS"];
+    // Without the transport, Codex refuses to start when the project is
+    // untrusted and never loaded the server ("invalid transport").
+    expect(getMcpServerOverride(undefined, { cwd: project })).toEqual([
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.projfake.enabled=false",
+      "-c", 'mcp_servers.projfake.command="./fake-mcp.sh"',
+      "-c", "mcp_servers.serena.enabled=false",
+    ]);
+  });
+
+  it("comma list: a project-only name is known, and left to Codex's own trust gate", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      process.env["CODEX_MCP_SERVERS"] = "projfake";
+      expect(getMcpServerOverride(undefined, { cwd: project })).toEqual([
+        "-c", "mcp_servers.playwright.enabled=false",
+        "-c", "mcp_servers.serena.enabled=false",
+      ]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("without cwd, only the user config is enumerated", () => {
+    delete process.env["CODEX_MCP_SERVERS"];
+    expect(getMcpServerOverride()).toEqual([
+      "-c", "mcp_servers.playwright.enabled=false",
+      "-c", "mcp_servers.serena.enabled=false",
+    ]);
   });
 });
 

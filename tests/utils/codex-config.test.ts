@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   readCodexConfig,
@@ -9,6 +11,9 @@ import {
   resolveCodexConfigPath,
   type ConfiguredServer,
   listMcpServerEnvValues,
+  listProjectMcpServers,
+  mergeProjectServers,
+  tomlString,
 } from "../../src/utils/codex-config.js";
 
 const FIXTURES = join(process.cwd(), "tests", "fixtures");
@@ -286,5 +291,121 @@ describe("listMcpServerEnvValues", () => {
     expect(listMcpServerEnvValues({})).toEqual([]);
     expect(listMcpServerEnvValues({ mcp_servers: { a: { env: "nope" } } })).toEqual([]);
     expect(listMcpServerEnvValues({ mcp_servers: { a: { env: { N: 5 } } } })).toEqual([]);
+  });
+});
+
+describe("listProjectMcpServers", () => {
+  let root: string;
+
+  const writeProjectConfig = (dir: string, toml: string): void => {
+    mkdirSync(join(dir, ".codex"), { recursive: true });
+    writeFileSync(join(dir, ".codex", "config.toml"), toml);
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "codex-config-project-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds servers in .codex/config.toml at and above cwd, with their transport", () => {
+    writeProjectConfig(root, '[mcp_servers.outer]\nurl = "http://127.0.0.1:1/mcp"\n');
+    const cwd = join(root, "repo", "sub");
+    mkdirSync(cwd, { recursive: true });
+    writeProjectConfig(join(root, "repo"), '[mcp_servers.inner]\ncommand = "./serve.sh"\nrequired = true\n');
+
+    expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
+      { name: "inner", required: true, projectTransport: { key: "command", value: "./serve.sh" } },
+      { name: "outer", required: false, projectTransport: { key: "url", value: "http://127.0.0.1:1/mcp" } },
+    ]);
+  });
+
+  it("takes the transport nearest cwd and required from any declaring file", () => {
+    writeProjectConfig(root, '[mcp_servers.dup]\nurl = "http://far"\nrequired = true\n');
+    const cwd = join(root, "repo");
+    writeProjectConfig(cwd, '[mcp_servers.dup]\ncommand = "near"\n');
+
+    expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
+      { name: "dup", required: true, projectTransport: { key: "command", value: "near" } },
+    ]);
+  });
+
+  it("skips the user config when the walk reaches it", () => {
+    writeProjectConfig(root, '[mcp_servers.user_only]\ncommand = "x"\n');
+    expect(listProjectMcpServers(root, join(root, ".codex", "config.toml"))).toEqual([]);
+  });
+
+  it("walks the symlink target's ancestors as well as the link's", () => {
+    const real = join(root, "real", "proj");
+    mkdirSync(real, { recursive: true });
+    writeProjectConfig(join(root, "real"), '[mcp_servers.via_target]\ncommand = "x"\n');
+    const link = join(root, "link");
+    symlinkSync(real, link);
+
+    const names = listProjectMcpServers(link, join(root, "home", "config.toml")).map((s) => s.name);
+    expect(names).toEqual(["via_target"]);
+  });
+
+  it("skips unparseable files and entries Codex would reject", () => {
+    writeProjectConfig(root, "[mcp_servers.broken\n");
+    const cwd = join(root, "repo");
+    writeProjectConfig(
+      cwd,
+      '[mcp_servers.no_transport]\nenabled = true\n\n[mcp_servers.ok]\ncommand = "x"\n',
+    );
+
+    const names = listProjectMcpServers(cwd, join(root, "home", "config.toml")).map((s) => s.name);
+    expect(names).toEqual(["ok"]);
+  });
+});
+
+describe("mergeProjectServers", () => {
+  it("keeps the user entry for a shared name, required flag included, and adds project-only names", () => {
+    const user: ConfiguredServer[] = [{ name: "shared", required: false }];
+    const project: ConfiguredServer[] = [
+      { name: "shared", required: true, projectTransport: { key: "command", value: "p" } },
+      { name: "solo", required: false, projectTransport: { key: "url", value: "u" } },
+    ];
+    // The project file may be one Codex never loaded (untrusted), so it
+    // cannot mark a user server required and keep it running.
+    expect(mergeProjectServers(user, project)).toEqual([
+      { name: "shared", required: false },
+      { name: "solo", required: false, projectTransport: { key: "url", value: "u" } },
+    ]);
+  });
+});
+
+describe("buildMcpArgs with project-only servers", () => {
+  const project: ConfiguredServer[] = [
+    { name: "proj", required: false, projectTransport: { key: "command", value: "/opt/my server" } },
+    { name: "web", required: false, projectTransport: { key: "url", value: "http://h/mcp" } },
+  ];
+
+  it("re-states the declared transport alongside enabled=false", () => {
+    expect(buildMcpArgs(project)).toEqual([
+      "-c", "mcp_servers.proj.enabled=false",
+      "-c", 'mcp_servers.proj.command="/opt/my server"',
+      "-c", "mcp_servers.web.enabled=false",
+      "-c", 'mcp_servers.web.url="http://h/mcp"',
+    ]);
+  });
+
+  it("emits nothing for an enabled project-only server, leaving it to Codex's trust gate", () => {
+    expect(buildMcpArgs(project, new Set(["proj"]))).toEqual([
+      "-c", "mcp_servers.web.enabled=false",
+      "-c", 'mcp_servers.web.url="http://h/mcp"',
+    ]);
+  });
+});
+
+describe("tomlString", () => {
+  it("escapes quotes, backslashes and control characters", () => {
+    expect(tomlString('C:\\bin\\"x"\n\u0001')).toBe('"C:\\\\bin\\\\\\"x\\"\\n\\u0001"');
+  });
+
+  it("leaves plain paths and URLs alone", () => {
+    expect(tomlString("http://h:1/mcp?a=b")).toBe('"http://h:1/mcp?a=b"');
   });
 });
