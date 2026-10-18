@@ -14,6 +14,8 @@ import {
   listProjectMcpServers,
   mergeProjectServers,
   resolveCodexConfigPath,
+  resolveSystemConfigPaths,
+  managedEnabledFlags,
   buildMcpArgs,
   type CodexSystemConfigPaths,
   type ConfiguredServer,
@@ -124,17 +126,66 @@ interface ServerScope {
 }
 
 /** System, user and managed config servers, plus project-declared ones when `cwd` is known. */
-function configuredServers({ cwd, systemConfigPaths }: ServerScope): ConfiguredServer[] {
-  const layers = readNonProjectLayers(readCodexConfig(), systemConfigPaths);
+function configuredServers({ cwd, systemConfigPaths }: ServerScope): ConfiguredServers {
+  const paths = resolveSystemConfigPaths(systemConfigPaths);
+  const layers = readNonProjectLayers(readCodexConfig(), paths);
+  const managed = paths
+    ? { file: paths.managed, enabled: managedEnabledFlags(layers[layers.length - 1] ?? null) }
+    : { file: "", enabled: new Map<string, boolean>() };
   const own = listNonProjectMcpServers(layers);
-  if (cwd === undefined) return own;
+  if (cwd === undefined) return { servers: own, managed };
   const project = listProjectMcpServers(
     cwd,
     resolveCodexConfigPath(),
     markersFromLayers(layers),
     new Set(own.map((s) => s.name)),
   );
-  return mergeProjectServers(own, project);
+  return { servers: mergeProjectServers(own, project), managed };
+}
+
+/** Configured servers, plus the managed config's `enabled` values, which outrank `-c`. */
+interface ConfiguredServers {
+  servers: ConfiguredServer[];
+  managed: { file: string; enabled: ReadonlyMap<string, boolean> };
+}
+
+/**
+ * Warn when the managed config will overrule the override `buildMcpArgs`
+ * emits. Codex merges managed config above `-c` overrides: it is admin policy,
+ * so the bridge neither fights it nor refuses the call, and the argv is the
+ * same either way. One warning per direction per spawn, naming every server:
+ * servers the bridge disables that managed config keeps enabled, and servers
+ * the caller asked to enable that managed config keeps disabled.
+ */
+function warnManagedOverrides(
+  { servers, managed }: ConfiguredServers,
+  enabled: ReadonlySet<string> | undefined,
+  silent: boolean,
+): void {
+  if (silent || managed.enabled.size === 0) return;
+  const keptOn: string[] = [];
+  const keptOff: string[] = [];
+  for (const { name, required, projectTransport } of servers) {
+    const policy = managed.enabled.get(name);
+    if (enabled?.has(name)) {
+      if (!projectTransport && policy === false) keptOff.push(name);
+    } else if (!required && policy === true) {
+      keptOn.push(name);
+    }
+  }
+  const list = (names: string[]): string => names.map((n) => `'${n}'`).join(", ");
+  if (keptOn.length > 0) {
+    console.warn(
+      `codex-mcp-bridge: managed config ${managed.file} keeps MCP server(s) ${list(keptOn)} enabled; ` +
+      `it outranks the bridge's -c overrides, so they will start despite being disabled here`,
+    );
+  }
+  if (keptOff.length > 0) {
+    console.warn(
+      `codex-mcp-bridge: managed config ${managed.file} keeps MCP server(s) ${list(keptOff)} disabled; ` +
+      `it outranks the bridge's -c overrides, so the request to enable them has no effect`,
+    );
+  }
 }
 
 /**
@@ -148,10 +199,11 @@ function disableNonRequiredServers(
   scope: ServerScope,
 ): string[] {
   const configured = configuredServers(scope);
+  warnManagedOverrides(configured, undefined, silent);
   if (explicit && !silent) {
-    return buildMcpArgs(configured, new Set<string>());
+    return buildMcpArgs(configured.servers, new Set<string>());
   }
-  return buildMcpArgs(configured);
+  return buildMcpArgs(configured.servers);
 }
 
 /** Pass raw TOML through as a `-c` flag. */
@@ -170,7 +222,7 @@ function enableListedServers(val: string, silent: boolean, scope: ServerScope): 
     .filter((s) => s.length > 0);
 
   const configured = configuredServers(scope);
-  const configuredNames = new Set(configured.map((s) => s.name));
+  const configuredNames = new Set(configured.servers.map((s) => s.name));
 
   const enabled = new Set<string>();
   const warnedUnknowns = new Set<string>();
@@ -185,7 +237,8 @@ function enableListedServers(val: string, silent: boolean, scope: ServerScope): 
     }
   }
 
-  return buildMcpArgs(configured, enabled, { silent });
+  warnManagedOverrides(configured, enabled, silent);
+  return buildMcpArgs(configured.servers, enabled, { silent });
 }
 
 /**

@@ -352,10 +352,38 @@ function defaultSystemConfigPaths(): CodexSystemConfigPaths | null {
   return process.platform === "win32" ? null : CODEX_SYSTEM_CONFIG_PATHS;
 }
 
+/** `paths` as given, or the platform default when it is `undefined`. */
+export function resolveSystemConfigPaths(
+  paths: CodexSystemConfigPaths | null | undefined,
+): CodexSystemConfigPaths | null {
+  return paths === undefined ? defaultSystemConfigPaths() : paths;
+}
+
+/**
+ * The `enabled` value the managed config sets on each server that sets one.
+ *
+ * Codex merges the managed config above `-c` overrides, so this value wins
+ * over the bridge's `NAME={enabled=...}` entry whichever way they differ. The
+ * bridge cannot override it and does not refuse the call; the caller warns
+ * (see `warnManagedOverrides` in `env.ts`).
+ */
+export function managedEnabledFlags(managed: CodexConfig | null): Map<string, boolean> {
+  const flags = new Map<string, boolean>();
+  const servers = managed?.mcp_servers;
+  if (typeof servers !== "object" || servers === null || Array.isArray(servers)) return flags;
+  for (const [name, entry] of Object.entries(servers)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const enabled = (entry as Record<string, unknown>)["enabled"];
+    if (typeof enabled === "boolean") flags.set(name, enabled);
+  }
+  return flags;
+}
+
 /**
  * The config layers Codex always loads, whatever the project's trust, in its
- * merge order: system, user, managed. Missing files are `null`; a system or
- * managed file that exists but cannot be read fails closed.
+ * merge order: system, user, managed (so the managed layer is last when
+ * `paths` is given). Missing files are `null`; a system or managed file that
+ * exists but cannot be read fails closed.
  */
 export function readNonProjectLayers(
   userConfig: CodexConfig | null,

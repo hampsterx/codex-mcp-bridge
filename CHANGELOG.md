@@ -35,7 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `project_root_markers` is read from the system and managed config files as
   well as the user config, with Codex's precedence (`~` and `~/` markers
   expanded as Codex expands them), and servers those files declare are
-  suppressed like user servers. An empty `-c mcp_servers={}` still does not suppress anything on
+  suppressed like user servers. Managed config outranks `-c`, so where it
+  sets `enabled` against the bridge's override the bridge warns once per call
+  and leaves the policy in force. An empty `-c mcp_servers={}` still does not suppress anything on
   `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added

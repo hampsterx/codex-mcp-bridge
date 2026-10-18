@@ -166,6 +166,8 @@ Where several project files declare one server, the transport comes from the nea
 
 **Enumeration fails closed.** A project file that exists on the walk but is rejected (not a regular file, over the cap, unreadable, unparseable) refuses the spawn with an error naming the file, because Codex may load it and its servers would then start unsuppressed. An absent file is a no-op, and `CODEX_MCP_SERVERS=inherit` reads no config at all, so it is the escape hatch. The same holds when the override would exceed Linux's 128 KiB limit on one argument: a clear error instead of a raw `E2BIG` from the spawn.
 
+**Managed config is admin policy above every CLI override.** Codex merges `/etc/codex/managed_config.toml` on top of `-c` (its loader: "Managed config wins over CLI config"), so a managed `enabled = true` keeps a server running whatever the bridge emits, and a managed `enabled = false` keeps one off even when the caller asks to enable it. The bridge does not fight that or refuse the call: it emits the same argv and, unless `silent`, prints one warning per spawn naming the servers whose requested state managed config overrules.
+
 Enumeration and Codex's own load are separate reads, so a config changed between them is not covered. That race is not closable from outside Codex.
 
 A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.

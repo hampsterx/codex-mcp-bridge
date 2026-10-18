@@ -573,6 +573,86 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
   });
 });
 
+describe("getMcpServerOverride under a managed config", () => {
+  const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+  const origCodexHome = process.env["CODEX_HOME"];
+  let dir: string;
+  let paths: { system: string; managed: string };
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  /** Warnings about managed config only; other warnings are not under test here. */
+  const managedWarnings = (): string[] =>
+    warnSpy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("managed config"));
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-mcp-managed-"));
+    paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
+    // User config declares playwright and serena.
+    process.env["CODEX_HOME"] = fixtureHome("codex-home-stdio");
+    delete process.env["CODEX_MCP_SERVERS"];
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  it("warns once, naming every server, when managed config keeps on what the bridge disables", () => {
+    writeFileSync(
+      paths.managed,
+      "[mcp_servers.serena]\nenabled = true\n\n[mcp_servers.playwright]\nenabled = true\n",
+    );
+    const args = override(undefined, { systemConfigPaths: paths });
+
+    expect(managedWarnings()).toEqual([
+      expect.stringMatching(new RegExp(`managed config ${paths.managed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} keeps MCP server\\(s\\) 'playwright', 'serena' enabled`)),
+    ]);
+    // The warning changes nothing: same argv as with no managed config at all.
+    expect(args).toEqual(override(undefined, { systemConfigPaths: NO_SYSTEM_CONFIG }));
+  });
+
+  it("warns when managed config keeps off a server the caller asked to enable", () => {
+    writeFileSync(paths.managed, "[mcp_servers.serena]\nenabled = false\n");
+    process.env["CODEX_MCP_SERVERS"] = "serena";
+    const args = override(undefined, { systemConfigPaths: paths });
+
+    expect(managedWarnings()).toEqual([
+      expect.stringContaining("keeps MCP server(s) 'serena' disabled"),
+    ]);
+    expect(args).toEqual(override(undefined, { systemConfigPaths: NO_SYSTEM_CONFIG }));
+    expect(args).toEqual(["-c", "mcp_servers={playwright={enabled=false}, serena={enabled=true}}"]);
+  });
+
+  it("names a server only the managed config declares", () => {
+    writeFileSync(paths.managed, '[mcp_servers.mgd]\ncommand = "m"\nenabled = true\n');
+    override(undefined, { systemConfigPaths: paths });
+    expect(managedWarnings()).toEqual([expect.stringContaining("'mgd' enabled")]);
+  });
+
+  it("stays quiet when managed config agrees, or the server is required", () => {
+    writeFileSync(
+      paths.managed,
+      "[mcp_servers.playwright]\nenabled = false\n\n[mcp_servers.serena]\nenabled = true\nrequired = true\n",
+    );
+    override(undefined, { systemConfigPaths: paths });
+    process.env["CODEX_MCP_SERVERS"] = "serena";
+    override(undefined, { systemConfigPaths: paths });
+    expect(managedWarnings()).toEqual([]);
+  });
+
+  it("respects silent", () => {
+    writeFileSync(paths.managed, "[mcp_servers.serena]\nenabled = true\n");
+    override("", { silent: true, systemConfigPaths: paths });
+    override("serena,playwright", { silent: true, systemConfigPaths: paths });
+    expect(managedWarnings()).toEqual([]);
+  });
+});
+
 describe("buildIntrospectionEnv", () => {
   const KEY = "SLACK_USER_TOKEN_TEST_FIXTURE";
 
