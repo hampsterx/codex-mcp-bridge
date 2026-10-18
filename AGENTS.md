@@ -153,7 +153,8 @@ Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progr
 ### `CODEX_MCP_SERVERS` grammar
 
 Controls which MCP servers from `~/.codex/config.toml`, and from any project
-`.codex/config.toml` at or above the spawn's working directory, stay enabled
+`.codex/config.toml` between the spawn's working directory and its project
+root (as Codex resolves it from `project_root_markers`), stay enabled
 inside the Codex subprocess. Branches evaluated top-to-bottom:
 
 1. **unset / empty / whitespace** → disable every configured server except

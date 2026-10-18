@@ -15,6 +15,7 @@ import {
   listProjectMcpServers,
   mergeProjectServers,
   MAX_PROJECT_CONFIG_BYTES,
+  projectRootMarkers,
   readProjectConfigText,
   tomlString,
 } from "../../src/utils/codex-config.js";
@@ -297,6 +298,14 @@ describe("listProjectMcpServers", () => {
     writeFileSync(join(dir, ".codex", "config.toml"), toml);
   };
 
+  /** Make `dir` a project root the way a real checkout is: `.git/HEAD`. */
+  const markRoot = (dir: string): void => {
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/master\n");
+  };
+
+  const noUserConfig = (): string => join(root, "home", "config.toml");
+
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "codex-config-project-"));
   });
@@ -306,6 +315,7 @@ describe("listProjectMcpServers", () => {
   });
 
   it("finds servers in .codex/config.toml at and above cwd, with their transport", () => {
+    markRoot(root);
     writeProjectConfig(root, '[mcp_servers.outer]\nurl = "http://127.0.0.1:1/mcp"\n');
     const cwd = join(root, "repo", "sub");
     mkdirSync(cwd, { recursive: true });
@@ -318,6 +328,7 @@ describe("listProjectMcpServers", () => {
   });
 
   it("takes the transport nearest cwd, and required from the farther file when the nearer omits it", () => {
+    markRoot(root);
     writeProjectConfig(root, '[mcp_servers.dup]\nurl = "http://far"\nrequired = true\n');
     const cwd = join(root, "repo");
     writeProjectConfig(cwd, '[mcp_servers.dup]\ncommand = "near"\n');
@@ -332,15 +343,70 @@ describe("listProjectMcpServers", () => {
     expect(listProjectMcpServers(root, join(root, ".codex", "config.toml"))).toEqual([]);
   });
 
-  it("walks the symlink target's ancestors as well as the link's", () => {
+  it("walks from the symlink target, which is the cwd Codex sees", () => {
     const real = join(root, "real", "proj");
     mkdirSync(real, { recursive: true });
+    markRoot(join(root, "real"));
     writeProjectConfig(join(root, "real"), '[mcp_servers.via_target]\ncommand = "x"\n');
     const link = join(root, "link");
     symlinkSync(real, link);
 
-    const names = listProjectMcpServers(link, join(root, "home", "config.toml")).map((s) => s.name);
+    const names = listProjectMcpServers(link, noUserConfig()).map((s) => s.name);
     expect(names).toEqual(["via_target"]);
+  });
+
+  it("stops at the project root: a file above it cannot mark a server required", () => {
+    // `root` stands in for a world-writable /tmp over a checkout in it.
+    writeProjectConfig(root, '[mcp_servers.foo]\ncommand = "far"\nrequired = true\n\n[mcp_servers.above]\ncommand = "x"\n');
+    const repo = join(root, "repo");
+    markRoot(repo);
+    writeProjectConfig(repo, '[mcp_servers.foo]\ncommand = "near"\n');
+    const cwd = join(repo, "sub");
+    mkdirSync(cwd);
+
+    expect(listProjectMcpServers(cwd, noUserConfig())).toEqual([
+      { name: "foo", required: false, projectTransport: { key: "command", value: "near" } },
+    ]);
+  });
+
+  it("treats a linked worktree's .git file as the root", () => {
+    writeProjectConfig(root, '[mcp_servers.foo]\ncommand = "far"\nrequired = true\n');
+    const worktree = join(root, "wt");
+    mkdirSync(worktree);
+    writeFileSync(join(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n");
+    writeProjectConfig(worktree, '[mcp_servers.foo]\ncommand = "near"\n');
+
+    expect(listProjectMcpServers(worktree, noUserConfig())).toEqual([
+      { name: "foo", required: false, projectTransport: { key: "command", value: "near" } },
+    ]);
+  });
+
+  it("skips a .git directory with no HEAD, as Codex does, and reads up to the real root", () => {
+    markRoot(root);
+    writeProjectConfig(root, '[mcp_servers.outer]\ncommand = "x"\n');
+    const cwd = join(root, "repo");
+    mkdirSync(join(cwd, ".git"), { recursive: true });
+
+    expect(listProjectMcpServers(cwd, noUserConfig()).map((s) => s.name)).toEqual(["outer"]);
+  });
+
+  it("reads only cwd when no marker is found or markers are disabled", () => {
+    writeProjectConfig(root, '[mcp_servers.outer]\ncommand = "x"\n');
+    const cwd = join(root, "repo");
+    writeProjectConfig(cwd, '[mcp_servers.inner]\ncommand = "x"\n');
+    markRoot(root);
+
+    expect(listProjectMcpServers(cwd, noUserConfig(), []).map((s) => s.name)).toEqual(["inner"]);
+    expect(listProjectMcpServers(cwd, noUserConfig(), ["no-such-marker"]).map((s) => s.name)).toEqual(["inner"]);
+  });
+
+  it("honours custom markers", () => {
+    writeProjectConfig(root, '[mcp_servers.outer]\ncommand = "x"\n');
+    writeFileSync(join(root, ".hg"), "");
+    const cwd = join(root, "repo");
+    mkdirSync(cwd);
+
+    expect(listProjectMcpServers(cwd, noUserConfig(), [".hg"]).map((s) => s.name)).toEqual(["outer"]);
   });
 
   it("keeps names a -c key path could not carry, for buildMcpArgs to quote", () => {
@@ -361,6 +427,7 @@ describe("listProjectMcpServers", () => {
   });
 
   it("merges a nearer partial entry into a farther declaration, as Codex does", () => {
+    markRoot(root);
     writeProjectConfig(root, '[mcp_servers.foo]\ncommand = "far"\n\n[mcp_servers.bar]\ncommand = "b"\nrequired = true\n');
     const cwd = join(root, "repo");
     writeProjectConfig(cwd, "[mcp_servers.foo]\nrequired = true\n\n[mcp_servers.bar]\nrequired = false\n");
@@ -372,6 +439,7 @@ describe("listProjectMcpServers", () => {
   });
 
   it("skips unparseable files and entries Codex would reject", () => {
+    markRoot(root);
     writeProjectConfig(root, "[mcp_servers.broken\n");
     const cwd = join(root, "repo");
     writeProjectConfig(
@@ -381,6 +449,16 @@ describe("listProjectMcpServers", () => {
 
     const names = listProjectMcpServers(cwd, join(root, "home", "config.toml")).map((s) => s.name);
     expect(names).toEqual(["ok"]);
+  });
+});
+
+describe("projectRootMarkers", () => {
+  it("defaults to .git, and takes the user config's array of strings, empty included", () => {
+    expect(projectRootMarkers(null)).toEqual([".git"]);
+    expect(projectRootMarkers({})).toEqual([".git"]);
+    expect(projectRootMarkers({ project_root_markers: [".hg", ".git"] })).toEqual([".hg", ".git"]);
+    expect(projectRootMarkers({ project_root_markers: [] })).toEqual([]);
+    expect(projectRootMarkers({ project_root_markers: ".hg" })).toEqual([".git"]);
   });
 });
 

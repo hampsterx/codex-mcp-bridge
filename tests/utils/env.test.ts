@@ -478,6 +478,27 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     ]);
   });
 
+  it("stops the project walk at the root the user config's project_root_markers define", () => {
+    delete process.env["CODEX_MCP_SERVERS"];
+    mkdirSync(join(project, ".git"));
+    writeFileSync(join(project, ".git", "HEAD"), "ref: refs/heads/master\n");
+    const sub = join(project, "sub");
+    mkdirSync(join(sub, ".codex"), { recursive: true });
+    writeFileSync(join(sub, ".codex", "config.toml"), '[mcp_servers.subfake]\ncommand = "s"\n');
+    const home = join(project, "home");
+    mkdirSync(home);
+    process.env["CODEX_HOME"] = home;
+
+    writeFileSync(join(home, "config.toml"), "");
+    expect(getMcpServerOverride(undefined, { cwd: sub })[1]).toContain("projfake=");
+
+    // An empty array disables root detection, so Codex reads only cwd.
+    writeFileSync(join(home, "config.toml"), "project_root_markers = []\n");
+    expect(getMcpServerOverride(undefined, { cwd: sub })).toEqual([
+      "-c", 'mcp_servers={subfake={enabled=false, command="s"}}',
+    ]);
+  });
+
   it("without cwd, only the user config is enumerated", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     expect(getMcpServerOverride()).toEqual([

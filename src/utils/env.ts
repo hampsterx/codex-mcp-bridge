@@ -11,6 +11,8 @@ import {
   listMcpServers,
   listProjectMcpServers,
   mergeProjectServers,
+  projectRootMarkers,
+  resolveCodexConfigPath,
   buildMcpArgs,
   type ConfiguredServer,
 } from "./codex-config.js";
@@ -106,8 +108,11 @@ export function getMcpServerOverride(
 
 /** User-config servers, plus project-declared ones when `cwd` is known. */
 function configuredServers(cwd: string | undefined): ConfiguredServer[] {
-  const user = listMcpServers(readCodexConfig());
-  return cwd === undefined ? user : mergeProjectServers(user, listProjectMcpServers(cwd));
+  const config = readCodexConfig();
+  const user = listMcpServers(config);
+  if (cwd === undefined) return user;
+  const project = listProjectMcpServers(cwd, resolveCodexConfigPath(), projectRootMarkers(config));
+  return mergeProjectServers(user, project);
 }
 
 /**

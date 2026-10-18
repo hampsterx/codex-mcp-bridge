@@ -179,10 +179,16 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  * Codex may load for a spawn in `cwd`.
  *
  * Codex loads `.codex/config.toml` from each directory between `cwd` and the
- * project root, but only when the project is trusted, and trust is keyed on
- * the directory, the project root and the repository root. Rather than
- * reproduce those rules this scans every directory from `cwd` up to the
- * filesystem root, which is a superset of what any trust decision loads.
+ * project root (see `findProjectRoot`), but only when the project is trusted,
+ * and trust is keyed on the directory, the project root and the repository
+ * root. This reads the same directories and does not reproduce the trust
+ * rules, so it is a superset of what any trust decision loads. It stops at
+ * the root, as Codex does: a file above it (say a world-writable
+ * `/tmp/.codex/config.toml` over a checkout in `/tmp`) is never loaded by
+ * Codex and must not mark a project server `required` here.
+ *
+ * The walk starts from `realpath(cwd)`: Codex reads its working directory
+ * with `getcwd`, which is the physical path, and the bridge passes no `PWD`.
  *
  * Over-enumeration is only safe because each server keeps its declared
  * transport. Disabling a server Codex did not load (an untrusted project)
@@ -201,31 +207,31 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  *
  * @param cwd             Working directory the Codex subprocess will run in.
  * @param userConfigPath  The user config, skipped if the walk reaches it.
+ * @param markers         Project root markers, from `projectRootMarkers()`.
  */
 export function listProjectMcpServers(
   cwd: string,
   userConfigPath: string = resolveCodexConfigPath(),
+  markers: readonly string[] = DEFAULT_PROJECT_ROOT_MARKERS,
 ): ConfiguredServer[] {
   const userConfig = canonical(userConfigPath);
-  const seenFiles = new Set<string>();
   const byName = new Map<string, { transport?: McpTransport; required?: boolean }>();
 
-  for (const start of new Set([resolve(cwd), canonical(cwd)])) {
-    for (let dir = start; ; dir = dirname(dir)) {
-      const file = canonical(join(dir, ".codex", "config.toml"));
-      if (file !== userConfig && !seenFiles.has(file)) {
-        seenFiles.add(file);
-        for (const [name, table] of readProjectServerTables(file)) {
-          const merged = byName.get(name) ?? {};
-          if (merged.transport === undefined) merged.transport = transportOf(table);
-          if (merged.required === undefined && typeof table["required"] === "boolean") {
-            merged.required = table["required"];
-          }
-          byName.set(name, merged);
+  const start = canonical(cwd);
+  const root = findProjectRoot(start, markers) ?? start;
+  for (let dir = start; ; dir = dirname(dir)) {
+    const file = canonical(join(dir, ".codex", "config.toml"));
+    if (file !== userConfig) {
+      for (const [name, table] of readProjectServerTables(file)) {
+        const merged = byName.get(name) ?? {};
+        if (merged.transport === undefined) merged.transport = transportOf(table);
+        if (merged.required === undefined && typeof table["required"] === "boolean") {
+          merged.required = table["required"];
         }
+        byName.set(name, merged);
       }
-      if (dirname(dir) === dir) break;
     }
+    if (dir === root || dirname(dir) === dir) break;
   }
 
   const result: ConfiguredServer[] = [];
@@ -250,6 +256,61 @@ export function mergeProjectServers(
     if (!byName.has(server.name)) byName.set(server.name, server);
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Codex's default `project_root_markers`. */
+const DEFAULT_PROJECT_ROOT_MARKERS: readonly string[] = [".git"];
+
+/**
+ * The project root markers Codex will use: `project_root_markers` from the
+ * user config when it is an array of strings (an empty array disables root
+ * detection), else `[".git"]`. Any other type makes Codex refuse to load the
+ * config, so the default is as good as anything there.
+ */
+export function projectRootMarkers(config: CodexConfig | null): readonly string[] {
+  const markers = config?.["project_root_markers"];
+  if (Array.isArray(markers) && markers.every((m) => typeof m === "string")) {
+    return markers as string[];
+  }
+  return DEFAULT_PROJECT_ROOT_MARKERS;
+}
+
+/**
+ * The nearest ancestor of `start` (itself included) holding any marker, as
+ * Codex's `discover_project_root` finds it, or `undefined` when none does, in
+ * which case Codex treats `start` as the root. A marker counts when it exists
+ * in any form, so a linked worktree's `.git` file counts; a `.git` directory
+ * counts only when it has a `HEAD`.
+ */
+export function findProjectRoot(start: string, markers: readonly string[]): string | undefined {
+  if (markers.length === 0) return undefined;
+  for (let dir = start; ; dir = dirname(dir)) {
+    for (const marker of markers) {
+      const path = join(dir, marker);
+      if (!pathExists(path)) continue;
+      if (marker === ".git" && isDirectory(path) && !pathExists(join(path, "HEAD"))) continue;
+      return dir;
+    }
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
+/** Whether `path` exists, following symlinks, as Codex's metadata lookup does. */
+function pathExists(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** `realpath` when the path exists, else the path as resolved. */

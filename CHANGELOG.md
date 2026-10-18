@@ -14,8 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `$CODEX_HOME/config.toml`, so a project server booted on every `codex`,
   `search` or `structured` call made inside that project, regardless of
   `CODEX_MCP_SERVERS`. The bridge now reads every `.codex/config.toml` from the
-  working directory up to the filesystem root and disables those servers as
-  well, re-stating each one's own `command` or `url` so the override stays
+  working directory up to the project root, found the way Codex finds it
+  (`project_root_markers`, default `.git`, a linked worktree's `.git` file
+  included), and disables those servers as well, re-stating each one's own `command` or `url` so the override stays
   valid when the project is untrusted and Codex never loaded it. Trust rules
   are not reproduced. A project-only server named in `CODEX_MCP_SERVERS` is no
   longer reported as unknown; it is left to Codex's own trust gate rather than
