@@ -502,8 +502,6 @@ describe("executeCodex MCP suppression", () => {
 
     const { args, cwd } = spawnCodexMock.mock.calls[0]![0];
     expect(cwd).toBe(project);
-    expect(args.join(" ")).toContain(
-      'mcp_servers.projfake.enabled=false -c mcp_servers.projfake.command="./fake-mcp.sh"',
-    );
+    expect(args).toContain('mcp_servers={projfake={enabled=false, command="./fake-mcp.sh"}}');
   });
 });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,8 @@ import {
   listMcpServerEnvValues,
   listProjectMcpServers,
   mergeProjectServers,
+  MAX_PROJECT_CONFIG_BYTES,
+  readProjectConfigText,
   tomlString,
 } from "../../src/utils/codex-config.js";
 
@@ -179,16 +182,14 @@ describe("buildMcpArgs", () => {
 
   it("disables all non-required when enabled is undefined (default disable-all)", () => {
     expect(buildMcpArgs(configured)).toEqual([
-      "-c", "mcp_servers.baz.enabled=false",
-      "-c", "mcp_servers.foo.enabled=false",
+      "-c", "mcp_servers={baz={enabled=false}, foo={enabled=false}}",
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("disables all non-required when enabled is empty set", () => {
     expect(buildMcpArgs(configured, new Set())).toEqual([
-      "-c", "mcp_servers.baz.enabled=false",
-      "-c", "mcp_servers.foo.enabled=false",
+      "-c", "mcp_servers={baz={enabled=false}, foo={enabled=false}}",
     ]);
   });
 
@@ -201,8 +202,7 @@ describe("buildMcpArgs", () => {
   it("warns loudly when explicit enable list would drop a required server", () => {
     const args = buildMcpArgs(configured, new Set(["foo"]));
     expect(args).toEqual([
-      "-c", "mcp_servers.baz.enabled=false",
-      "-c", "mcp_servers.foo.enabled=true",
+      "-c", "mcp_servers={baz={enabled=false}, foo={enabled=true}}",
     ]);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]![0]).toMatch(/refusing to disable required MCP server 'bar'/);
@@ -211,8 +211,7 @@ describe("buildMcpArgs", () => {
   it("silent:true suppresses the required-server warning", () => {
     const args = buildMcpArgs(configured, new Set(["foo"]), { silent: true });
     expect(args).toEqual([
-      "-c", "mcp_servers.baz.enabled=false",
-      "-c", "mcp_servers.foo.enabled=true",
+      "-c", "mcp_servers={baz={enabled=false}, foo={enabled=true}}",
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -220,9 +219,7 @@ describe("buildMcpArgs", () => {
   it("does not warn when required server is already in enable set", () => {
     const args = buildMcpArgs(configured, new Set(["bar"]));
     expect(args).toEqual([
-      "-c", "mcp_servers.bar.enabled=true",
-      "-c", "mcp_servers.baz.enabled=false",
-      "-c", "mcp_servers.foo.enabled=false",
+      "-c", "mcp_servers={bar={enabled=true}, baz={enabled=false}, foo={enabled=false}}",
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -233,8 +230,7 @@ describe("buildMcpArgs", () => {
     // silently get it disabled while willEnableServer reports it enabled.
     const args = buildMcpArgs(configured, new Set(["foo", "baz"]));
     expect(args).toEqual([
-      "-c", "mcp_servers.baz.enabled=true",
-      "-c", "mcp_servers.foo.enabled=true",
+      "-c", "mcp_servers={baz={enabled=true}, foo={enabled=true}}",
     ]);
   });
 
@@ -244,8 +240,7 @@ describe("buildMcpArgs", () => {
       new Set(["weird.name"]),
     );
     expect(args).toEqual([
-      "-c", "mcp_servers.ck-search.enabled=false",
-      "-c", 'mcp_servers."weird.name".enabled=true',
+      "-c", 'mcp_servers={ck-search={enabled=false}, "weird.name"={enabled=true}}',
     ]);
   });
 });
@@ -322,7 +317,7 @@ describe("listProjectMcpServers", () => {
     ]);
   });
 
-  it("takes the transport nearest cwd and required from any declaring file", () => {
+  it("takes the transport nearest cwd, and required from the farther file when the nearer omits it", () => {
     writeProjectConfig(root, '[mcp_servers.dup]\nurl = "http://far"\nrequired = true\n');
     const cwd = join(root, "repo");
     writeProjectConfig(cwd, '[mcp_servers.dup]\ncommand = "near"\n');
@@ -348,27 +343,32 @@ describe("listProjectMcpServers", () => {
     expect(names).toEqual(["via_target"]);
   });
 
-  it("skips, with a warning, names a Codex -c override cannot address", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const file = join(root, ".codex", "config.toml");
-      writeProjectConfig(
-        root,
-        [
-          '[mcp_servers."my.server"]\ncommand = "x"',
-          '[mcp_servers."a=b"]\ncommand = "x"',
-          "[mcp_servers.'q\"x']\ncommand = \"x\"",
-          '[mcp_servers.ok-name_1]\ncommand = "x"',
-        ].join("\n\n"),
-      );
+  it("keeps names a -c key path could not carry, for buildMcpArgs to quote", () => {
+    writeProjectConfig(
+      root,
+      [
+        '[mcp_servers."my.server"]\ncommand = "x"',
+        '[mcp_servers."a=b"]\ncommand = "x"',
+        "[mcp_servers.'q\"x']\ncommand = \"x\"",
+        "[mcp_servers.\"pwn={command='/bin/true',enabled=true}#\"]\ncommand = \"x\"",
+      ].join("\n\n"),
+    );
 
-      const names = listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name);
-      expect(names).toEqual(["ok-name_1"]);
-      expect(warnSpy).toHaveBeenCalledTimes(3);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`'my.server' from ${file}`));
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const names = listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name);
+    expect(names.sort()).toEqual(
+      ["a=b", "my.server", "pwn={command='/bin/true',enabled=true}#", 'q"x'].sort(),
+    );
+  });
+
+  it("merges a nearer partial entry into a farther declaration, as Codex does", () => {
+    writeProjectConfig(root, '[mcp_servers.foo]\ncommand = "far"\n\n[mcp_servers.bar]\ncommand = "b"\nrequired = true\n');
+    const cwd = join(root, "repo");
+    writeProjectConfig(cwd, "[mcp_servers.foo]\nrequired = true\n\n[mcp_servers.bar]\nrequired = false\n");
+
+    expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
+      { name: "bar", required: false, projectTransport: { key: "command", value: "b" } },
+      { name: "foo", required: true, projectTransport: { key: "command", value: "far" } },
+    ]);
   });
 
   it("skips unparseable files and entries Codex would reject", () => {
@@ -408,19 +408,92 @@ describe("buildMcpArgs with project-only servers", () => {
 
   it("re-states the declared transport alongside enabled=false", () => {
     expect(buildMcpArgs(project)).toEqual([
-      "-c", "mcp_servers.proj.enabled=false",
-      "-c", 'mcp_servers.proj.command="/opt/my server"',
-      "-c", "mcp_servers.web.enabled=false",
-      "-c", 'mcp_servers.web.url="http://h/mcp"',
+      "-c", 'mcp_servers={proj={enabled=false, command="/opt/my server"}, web={enabled=false, url="http://h/mcp"}}',
     ]);
   });
 
   it("emits nothing for an enabled project-only server, leaving it to Codex's trust gate", () => {
     expect(buildMcpArgs(project, new Set(["proj"]))).toEqual([
-      "-c", "mcp_servers.web.enabled=false",
-      "-c", 'mcp_servers.web.url="http://h/mcp"',
+      "-c", 'mcp_servers={web={enabled=false, url="http://h/mcp"}}',
     ]);
   });
+});
+
+describe("buildMcpArgs with names a -c key path cannot carry", () => {
+  it("keeps the key path fixed at mcp_servers and quotes names inside the value", () => {
+    const pwn = "pwn={command='/bin/true',enabled=true}#";
+    const args = buildMcpArgs([
+      { name: "a.b", required: false },
+      { name: pwn, required: false, projectTransport: { key: "command", value: "x" } },
+    ]);
+    expect(args).toEqual([
+      "-c",
+      `mcp_servers={"a.b"={enabled=false}, "${pwn}"={enabled=false, command="x"}}`,
+    ]);
+    // Codex splits the argument on its first "=": that must be the one
+    // after the fixed key.
+    expect(args[1]!.split("=")[0]).toBe("mcp_servers");
+  });
+
+  it("emits nothing when no server needs an entry", () => {
+    expect(buildMcpArgs([{ name: "req", required: true }])).toEqual([]);
+  });
+});
+
+describe("readProjectConfigText", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-config-read-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a regular file, and a symlink to one", () => {
+    writeFileSync(join(dir, "real.toml"), "a = 1\n");
+    symlinkSync(join(dir, "real.toml"), join(dir, "link.toml"));
+    expect(readProjectConfigText(join(dir, "real.toml"))).toBe("a = 1\n");
+    expect(readProjectConfigText(join(dir, "link.toml"))).toBe("a = 1\n");
+  });
+
+  it(`refuses a file over ${MAX_PROJECT_CONFIG_BYTES} bytes`, () => {
+    writeFileSync(join(dir, "big.toml"), "#".repeat(MAX_PROJECT_CONFIG_BYTES + 1));
+    writeFileSync(join(dir, "edge.toml"), "#".repeat(MAX_PROJECT_CONFIG_BYTES));
+    expect(readProjectConfigText(join(dir, "big.toml"))).toBeNull();
+    expect(readProjectConfigText(join(dir, "edge.toml"))).toHaveLength(MAX_PROJECT_CONFIG_BYTES);
+  });
+
+  // A blocking read would freeze this process and any in-process timeout
+  // with it, so the special files are read in a child under a hard deadline.
+  // SIGKILL, because vite-node's SIGTERM handler cannot run while it is blocked.
+  it.skipIf(process.platform === "win32")(
+    "returns null for a FIFO and for a symlink to /dev/zero without blocking",
+    () => {
+      const fifo = join(dir, "fifo.toml");
+      execFileSync("mkfifo", [fifo]);
+      const zero = join(dir, "zero.toml");
+      symlinkSync("/dev/zero", zero);
+      const script = join(dir, "read.mts");
+      writeFileSync(
+        script,
+        `import { readProjectConfigText } from ${JSON.stringify(join(process.cwd(), "src", "utils", "codex-config.ts"))};\n` +
+        `console.log(JSON.stringify(process.argv.slice(2).map((p) => readProjectConfigText(p))));\n`,
+      );
+
+      const run = spawnSync(join(process.cwd(), "node_modules", ".bin", "vite-node"), [script, fifo, zero], {
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+
+      expect(run.signal).toBeNull();
+      expect(run.status, run.stderr).toBe(0);
+      expect(JSON.parse(run.stdout.trim().split("\n").pop()!)).toEqual([null, null]);
+    },
+    40_000,
+  );
 });
 
 describe("tomlString", () => {

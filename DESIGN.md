@@ -138,9 +138,15 @@ All tools use disable-all by default. The `codex` tool inherits from the `CODEX_
 
 Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required = true` flag under `[mcp_servers.NAME]`. When set, the bridge refuses to disable that server regardless of `CODEX_MCP_SERVERS` value, and emits a warning to stderr.
 
-### Why per-server enumeration?
+### Why per-server enumeration, in one table?
 
-A blanket `-c mcp_servers={}` override silently no-ops: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045), still true on `codex-cli 0.163.0`, for user and project servers alike). Per-server `enabled=false` is the only reliable disable path.
+An empty `-c mcp_servers={}` override silently no-ops: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045), still true on `codex-cli 0.163.0`, for user and project servers alike). The same merge is what makes a **non-empty** table work: `-c 'mcp_servers={drop={enabled=false}, keep={enabled=true}}'` merges into the loaded tables, so `keep` keeps its own `command` and `args` and an omitted `required` server is untouched (measured on 0.163.0). So the bridge names every server, in one inline table:
+
+```
+-c mcp_servers={github={enabled=false}, "my.server"={enabled=false}, serena={enabled=true}}
+```
+
+Names go inside the value, never in the `-c` key path. Codex's `-c` parser splits the argument on the first `=` and the path on `.` without unquoting, so a quoted key in the path arrives as literal characters: `mcp_servers."my.server".enabled=false` creates a server called `"my` with no transport and Codex refuses to start, and a name like `x={command='...',enabled=true}#` injected an enabled server. The value side is parsed as real TOML, so any name round-trips.
 
 ### Project-declared servers
 
@@ -149,12 +155,12 @@ Codex loads `[mcp_servers.*]` from a project's `.codex/config.toml` (each direct
 The bridge does not reproduce that resolution. Every spawning tool passes its working directory, and the bridge reads every `.codex/config.toml` from there up to the filesystem root, a superset of what any trust decision loads. Over-enumerating is safe only because of how each project-only server is disabled:
 
 ```
--c mcp_servers.NAME.enabled=false -c mcp_servers.NAME.command="<its own command>"
+-c mcp_servers={NAME={enabled=false, command="<its own command>"}}
 ```
 
 A bare `enabled=false` for a server Codex did not load (an untrusted project) creates a table with no transport, and Codex refuses to start with `invalid transport`. Re-stating the server's own `command` or `url` keeps the table valid whether or not the layer loaded; the other transport kind fails with `url is not supported for stdio`. A disabled server never spawns, so this cannot start anything the trust gate kept off.
 
-A project-only server whose name is not a TOML bare key (`[A-Za-z0-9_-]+`) is skipped with a warning and left to Codex. The `-c` parser splits the argument on the first `=` and the key path on `.` without unquoting, so a quoted `"my.server"` reaches it as literal characters, and from an untrusted repository that override alone would stop every call from starting.
+Declarations of one server across several project files are merged per key, nearest file first, as Codex merges layers, so a nearer file that only sets `required = true` still marks it required. Project files are read only if they are regular files (a symlink to one is followed, as Codex follows it) of at most 1 MiB, checked before and after a non-blocking open, because the bridge reads them synchronously before any subprocess timeout starts and a FIFO or `/dev/zero` would otherwise stall or exhaust it.
 
 A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.
 

@@ -19,10 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   valid when the project is untrusted and Codex never loaded it. Trust rules
   are not reproduced. A project-only server named in `CODEX_MCP_SERVERS` is no
   longer reported as unknown; it is left to Codex's own trust gate rather than
-  force-enabled. A project server whose name is not a TOML bare key
-  (`[A-Za-z0-9_-]`) is skipped with a warning, because Codex's `-c` parser
-  cannot address it and the override would stop every call from starting. A blanket `-c mcp_servers={}` still does not suppress
-  anything on `codex-cli 0.163.0`, so per-server enumeration stays.
+  force-enabled. Overrides are now emitted as one `-c mcp_servers={...}` inline
+  table with server names quoted inside the value: Codex's `-c` parser splits
+  the key path on `.` and `=` without unquoting, so a server named `my.server`
+  (user or project config) made every call fail, and a crafted name could add
+  an enabled server. Partial declarations of one server across several project
+  files are merged as Codex merges them, so a nearer `required = true` holds.
+  Project config files are read only if they are regular files of at most 1 MiB,
+  opened non-blocking, so a FIFO or `/dev/zero` in a repository cannot stall the
+  bridge. An empty `-c mcp_servers={}` still does not suppress anything on
+  `codex-cli 0.163.0`, so per-server enumeration stays.
 
 ### Added
 

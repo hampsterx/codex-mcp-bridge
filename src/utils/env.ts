@@ -45,10 +45,11 @@ const ALLOWED_ENV_KEYS = [
  *
  *   1. unset / empty / whitespace-only → disable every configured server
  *      except those marked `required=true` (default, fastest). Enumerates
- *      per-server via `-c mcp_servers.NAME.enabled=false`. A blanket
- *      `mcp_servers={}` override silently no-ops due to config-merge
- *      semantics (upstream #16045, still true on Codex 0.163.0), so
- *      enumeration is the only reliable path. "Configured" covers the user
+ *      each server into one `-c mcp_servers={NAME={enabled=false}, ...}`
+ *      table (see `buildMcpArgs`). An empty `mcp_servers={}` override
+ *      silently no-ops due to config-merge semantics (upstream #16045,
+ *      still true on Codex 0.163.0), so enumeration is the only reliable
+ *      path. "Configured" covers the user
  *      config and, when `cwd` is given, project `.codex/config.toml` files
  *      above it (see `listProjectMcpServers`).
  *

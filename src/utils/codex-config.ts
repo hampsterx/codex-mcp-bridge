@@ -3,13 +3,22 @@
  * `~/.codex/config.toml`), plus any project `.codex/config.toml` above the
  * spawn's working directory, to enumerate configured MCP servers.
  *
- * Used by `getMcpServerOverride()` to emit per-server
- * `-c mcp_servers.NAME.enabled=false` disables. A blanket `-c mcp_servers={}`
- * override silently no-ops due to config-merge semantics (upstream #16045,
- * still true on Codex 0.163.0), so enumeration is the only reliable path.
+ * Used by `getMcpServerOverride()` to emit one `-c mcp_servers={...}` table
+ * naming each server to disable. An empty `-c mcp_servers={}` silently
+ * no-ops due to config-merge semantics (upstream #16045, still true on Codex
+ * 0.163.0), so enumeration is the only reliable path.
  */
 
-import { readFileSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -176,22 +185,19 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  * filesystem root, which is a superset of what any trust decision loads.
  *
  * Over-enumeration is only safe because each server keeps its declared
- * transport. A bare `-c mcp_servers.NAME.enabled=false` for a server Codex
- * did not load (an untrusted project) creates a table with no transport and
- * Codex refuses to start. Re-stating the server's own `command` or `url`
- * alongside `enabled=false` keeps the table valid either way, and a disabled
- * server never spawns, so this cannot run anything Codex's trust gate kept off.
+ * transport. Disabling a server Codex did not load (an untrusted project)
+ * without one creates a table with no transport and Codex refuses to start.
+ * Re-stating the server's own `command` or `url` alongside `enabled=false`
+ * keeps the table valid either way, and a disabled server never spawns, so
+ * this cannot run anything Codex's trust gate kept off.
  *
- * Unreadable or unparseable files, and entries with no string `command` or
- * `url`, are skipped: Codex reports its own error if it loads them. So is a
- * server whose name is not a TOML bare key, with a warning: Codex's `-c`
- * parser splits the key path on `.` and the argument on the first `=` with no
- * unquoting, so `quoteKey`'s quoting reaches it as literal characters and a
- * name like `my.server` would create a transport-less table that stops every
- * call from starting, trusted project or not. Where
- * several files declare one name, the one nearest `cwd` supplies the
- * transport (Codex merges nearer layers on top) and `required` is true if
- * any of them says so.
+ * Declarations are merged per key, nearest file first, as Codex merges nearer
+ * layers on top, so a nearer file that only sets `required = true` on a server
+ * a farther one declares still counts. The transport is taken from the
+ * nearest file declaring a string `command` or `url`, and a server with
+ * neither after the merge is skipped: Codex rejects it if it loads it.
+ * Files are read through `readProjectConfigText`, which bounds what an
+ * untrusted repository can make the bridge read.
  *
  * @param cwd             Working directory the Codex subprocess will run in.
  * @param userConfigPath  The user config, skipped if the walk reaches it.
@@ -202,24 +208,31 @@ export function listProjectMcpServers(
 ): ConfiguredServer[] {
   const userConfig = canonical(userConfigPath);
   const seenFiles = new Set<string>();
-  const byName = new Map<string, ConfiguredServer>();
+  const byName = new Map<string, { transport?: McpTransport; required?: boolean }>();
 
   for (const start of new Set([resolve(cwd), canonical(cwd)])) {
     for (let dir = start; ; dir = dirname(dir)) {
       const file = canonical(join(dir, ".codex", "config.toml"));
       if (file !== userConfig && !seenFiles.has(file)) {
         seenFiles.add(file);
-        for (const server of readProjectServers(file)) {
-          const prior = byName.get(server.name);
-          if (prior) prior.required ||= server.required;
-          else byName.set(server.name, server);
+        for (const [name, table] of readProjectServerTables(file)) {
+          const merged = byName.get(name) ?? {};
+          if (merged.transport === undefined) merged.transport = transportOf(table);
+          if (merged.required === undefined && typeof table["required"] === "boolean") {
+            merged.required = table["required"];
+          }
+          byName.set(name, merged);
         }
       }
       if (dirname(dir) === dir) break;
     }
   }
 
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const result: ConfiguredServer[] = [];
+  for (const [name, { transport, required }] of byName) {
+    if (transport) result.push({ name, required: required === true, projectTransport: transport });
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -248,11 +261,56 @@ function canonical(path: string): string {
   }
 }
 
-/** Servers with a usable transport from one project config file, or none. */
-function readProjectServers(file: string): ConfiguredServer[] {
+/** Largest project config the bridge will read. Real ones are a few KB. */
+export const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
+
+/**
+ * Read a project config without letting the repository stall or exhaust the
+ * bridge, which reads it synchronously before any subprocess timeout runs.
+ *
+ * Only regular files up to `MAX_PROJECT_CONFIG_BYTES` are read; a FIFO, a
+ * device such as `/dev/zero` or an oversized file yields `null`. A symlink is
+ * followed, because Codex follows it too and refusing it would leave a server
+ * Codex loads unsuppressed; the checks apply to its target. The type is
+ * checked before opening (so a FIFO is never opened for a blocking read) and
+ * again on the open descriptor, which is opened non-blocking, so swapping the
+ * path between the two cannot get a special file read either.
+ */
+export function readProjectConfigText(file: string): string | null {
+  let fd: number;
+  try {
+    if (!statSync(file).isFile()) return null;
+    fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOCTTY ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_PROJECT_CONFIG_BYTES) return null;
+    // One byte of headroom shows a file that grew past its stat size.
+    const buf = Buffer.alloc(stat.size + 1);
+    let length = 0;
+    for (;;) {
+      const read = readSync(fd, buf, length, buf.length - length, null);
+      if (read === 0) break;
+      length += read;
+      if (length === buf.length) return null;
+    }
+    return buf.toString("utf8", 0, length);
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The `[mcp_servers.*]` tables of one project config file, or none. */
+function readProjectServerTables(file: string): Array<[string, Record<string, unknown>]> {
+  const text = readProjectConfigText(file);
+  if (text === null) return [];
   let config: CodexConfig;
   try {
-    config = parseToml(readFileSync(file, "utf8")) as CodexConfig;
+    config = parseToml(text) as CodexConfig;
   } catch {
     return [];
   }
@@ -260,29 +318,17 @@ function readProjectServers(file: string): ConfiguredServer[] {
   if (typeof servers !== "object" || servers === null || Array.isArray(servers)) {
     return [];
   }
+  return Object.entries(servers).filter(
+    (entry): entry is [string, Record<string, unknown>] =>
+      typeof entry[1] === "object" && entry[1] !== null && !Array.isArray(entry[1]),
+  );
+}
 
-  const result: ConfiguredServer[] = [];
-  for (const [name, entry] of Object.entries(servers)) {
-    if (typeof entry !== "object" || entry === null) continue;
-    if (!BARE_KEY.test(name)) {
-      console.warn(
-        `codex-mcp-bridge: not disabling MCP server '${name}' from ${file}: ` +
-        `only names matching [A-Za-z0-9_-] can be addressed by a Codex -c override`,
-      );
-      continue;
-    }
-    const table = entry as Record<string, unknown>;
-    let projectTransport: McpTransport;
-    if (typeof table["command"] === "string") {
-      projectTransport = { key: "command", value: table["command"] };
-    } else if (typeof table["url"] === "string") {
-      projectTransport = { key: "url", value: table["url"] };
-    } else {
-      continue;
-    }
-    result.push({ name, required: table["required"] === true, projectTransport });
-  }
-  return result;
+/** The transport a server table declares, `command` first, if any. */
+function transportOf(table: Record<string, unknown>): McpTransport | undefined {
+  if (typeof table["command"] === "string") return { key: "command", value: table["command"] };
+  if (typeof table["url"] === "string") return { key: "url", value: table["url"] };
+  return undefined;
 }
 
 /**
@@ -310,13 +356,15 @@ export function tomlString(value: string): string {
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 
 /**
- * Quote a TOML key for use in a `-c mcp_servers.NAME.enabled=false` path,
- * matching TOML's basic-string quoting rules.
+ * Quote a TOML key for use inside the `mcp_servers` inline table that
+ * `buildMcpArgs` emits, matching TOML's basic-string quoting rules.
+ *
+ * Only valid on the value side of `-c`. Codex's `-c` parser splits the
+ * argument on the first `=` and the key path on `.` with no unquoting, so a
+ * quoted key in the path arrives as literal characters.
  */
 export function quoteKey(name: string): string {
-  if (BARE_KEY.test(name)) return name;
-  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return `"${escaped}"`;
+  return BARE_KEY.test(name) ? name : tomlString(name);
 }
 
 export interface BuildMcpArgsOptions {
@@ -330,30 +378,38 @@ export interface BuildMcpArgsOptions {
 }
 
 /**
- * Build CLI args to control configured MCP servers:
+ * Build CLI args to control configured MCP servers, as one
+ * `-c mcp_servers={...}` inline table (or none when there is nothing to say).
  *
- *   - Servers in the `enabled` set get an explicit
- *     `-c mcp_servers.NAME.enabled=true` override, so a requested server that
- *     happens to be `enabled = false` in `config.toml` is still turned on.
- *     Without this, the bridge's only lever is the disable path and a user
- *     who asked `CODEX_MCP_SERVERS=serena` on a config where `serena.enabled
- *     = false` would end up with serena silently off.
- *   - Every other configured server gets `-c mcp_servers.NAME.enabled=false`,
- *     except `required = true` servers which are always kept enabled
- *     (disabling them would break Codex startup).
+ * Server names go inside the value, which Codex parses as real TOML, never in
+ * the `-c` key path, which it splits on `.` and `=` without unquoting: there a
+ * project server named `a.b` broke every call and one named
+ * `x={command='...',enabled=true}#` injected an enabled server. A non-empty
+ * table value merges into the loaded user and project tables rather than
+ * replacing them (measured on codex-cli 0.163.0: a server enabled here keeps
+ * its own `command` and `args`); only the empty `{}` no-ops (upstream #16045).
+ *
+ *   - Servers in the `enabled` set get `NAME={enabled=true}`, so a requested
+ *     server that happens to be `enabled = false` in `config.toml` is still
+ *     turned on. Without this, the bridge's only lever is the disable path
+ *     and a user who asked `CODEX_MCP_SERVERS=serena` on a config where
+ *     `serena.enabled = false` would end up with serena silently off.
+ *   - Every other configured server gets `NAME={enabled=false}`, except
+ *     `required = true` servers which are always kept enabled (disabling them
+ *     would break Codex startup).
  *   - A project-only server (`projectTransport` set) is disabled with its
- *     transport re-stated, so the override is valid whether or not Codex
- *     trusted the project. In the `enabled` set it gets no override at all:
+ *     transport re-stated, so the entry is valid whether or not Codex trusted
+ *     the project. In the `enabled` set it gets no entry at all:
  *     `enabled=true` alone breaks startup when the project is untrusted, and
  *     with a transport it would start a server Codex's trust gate kept off.
  *     It runs only if Codex loaded it and its own config leaves it enabled.
  *
  * `enabled` is the set of server names the caller wants left on.
  *   - `undefined` → disable all non-required (default "disable-all" behaviour).
- *     No `enabled=true` overrides are emitted: anyone relying on the default
+ *     No `enabled=true` entries are emitted: anyone relying on the default
  *     already has their config pointed the way they want.
  *   - `new Set()` → same as undefined (no servers enabled, disable all non-required).
- *   - `new Set(["serena"])` → emit `serena.enabled=true`; disable every other
+ *   - `new Set(["serena"])` → `serena={enabled=true}`; disable every other
  *     non-required server.
  *
  * When a required server is not in the enable set and `enabled` was explicitly
@@ -362,19 +418,19 @@ export interface BuildMcpArgsOptions {
  * defaults. The default disable-all path (`enabled === undefined`) stays
  * silent regardless.
  *
- * Args are sorted by server name for stable output.
+ * Entries are sorted by server name for stable output.
  */
 export function buildMcpArgs(
   configured: ConfiguredServer[],
   enabled?: ReadonlySet<string>,
   { silent = false }: BuildMcpArgsOptions = {},
 ): string[] {
-  const out: string[] = [];
+  const entries: string[] = [];
   const sorted = [...configured].sort((a, b) => a.name.localeCompare(b.name));
   for (const { name, required, projectTransport } of sorted) {
-    const key = `mcp_servers.${quoteKey(name)}`;
+    const key = quoteKey(name);
     if (enabled?.has(name)) {
-      if (!projectTransport) out.push("-c", `${key}.enabled=true`);
+      if (!projectTransport) entries.push(`${key}={enabled=true}`);
       continue;
     }
     if (required) {
@@ -385,11 +441,10 @@ export function buildMcpArgs(
       }
       continue;
     }
-    out.push("-c", `${key}.enabled=false`);
-    if (projectTransport) {
-      out.push("-c", `${key}.${projectTransport.key}=${tomlString(projectTransport.value)}`);
-    }
+    const transport = projectTransport
+      ? `, ${projectTransport.key}=${tomlString(projectTransport.value)}`
+      : "";
+    entries.push(`${key}={enabled=false${transport}}`);
   }
-  return out;
+  return entries.length > 0 ? ["-c", `mcp_servers={${entries.join(", ")}}`] : [];
 }
-

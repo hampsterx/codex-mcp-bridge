@@ -172,6 +172,11 @@ over env var wins over tool default.
 The `required` flag (codex PR #10902) is read straight from `config.toml`
 and cannot be disabled by any caller.
 
+All of it is emitted as one `-c mcp_servers={...}` inline table with names
+quoted inside the value, never `-c mcp_servers.NAME...`: Codex's `-c` key
+path splits on `.` and `=` without unquoting. A non-empty table merges into
+the loaded config; only the empty one no-ops (#16045).
+
 Project-only servers are disabled with their own `command`/`url` re-stated,
 because a bare `enabled=false` for a server Codex did not load (untrusted
 project) makes Codex refuse to start. Named in the enable list, they get no
