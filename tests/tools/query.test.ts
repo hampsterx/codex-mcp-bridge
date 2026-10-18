@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, mkdtempMock, rmMock } = vi.hoisted(() => ({
@@ -6,6 +7,10 @@ const { spawnCodexMock, mkdtempMock, rmMock } = vi.hoisted(() => ({
   mkdtempMock: vi.fn<(prefix: string) => Promise<string>>(),
   rmMock: vi.fn<(path: string, options?: object) => Promise<void>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,

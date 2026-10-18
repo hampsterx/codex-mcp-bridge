@@ -15,6 +15,7 @@ import {
   mergeProjectServers,
   resolveCodexConfigPath,
   buildMcpArgs,
+  type CodexSystemConfigPaths,
   type ConfiguredServer,
 } from "./codex-config.js";
 
@@ -89,10 +90,18 @@ const ALLOWED_ENV_KEYS = [
  * @param options.cwd  Working directory the subprocess will spawn in. Every
  *                  spawning tool passes it; without it, servers declared in a
  *                  trusted project's `.codex/config.toml` boot unsuppressed.
+ * @param options.systemConfigPaths  System and managed config files to read
+ *                  (see `readNonProjectLayers`). Omitted means Codex's real
+ *                  `/etc/codex` paths (none on Windows); `null` reads neither.
+ *                  Tools never pass it; it exists so tests stay off the host.
  */
 export function getMcpServerOverride(
   override?: string,
-  { silent = false, cwd }: { silent?: boolean; cwd?: string } = {},
+  {
+    silent = false,
+    cwd,
+    systemConfigPaths,
+  }: { silent?: boolean; cwd?: string; systemConfigPaths?: CodexSystemConfigPaths | null } = {},
 ): string[] {
   const envValue = process.env["CODEX_MCP_SERVERS"];
   // "Explicit" means the caller or the env var provided a value (even if it's
@@ -101,15 +110,22 @@ export function getMcpServerOverride(
   const raw = override !== undefined ? override : envValue;
   const val = raw?.trim() ?? "";
 
-  if (val === "") return disableNonRequiredServers(explicit, silent, cwd);
+  const scope: ServerScope = { cwd, systemConfigPaths };
+  if (val === "") return disableNonRequiredServers(explicit, silent, scope);
   if (val === "inherit") return [];
   if (val[0] === "{" || val[0] === "[") return rawTomlOverride(val);
-  return enableListedServers(val, silent, cwd);
+  return enableListedServers(val, silent, scope);
+}
+
+/** Where `configuredServers` looks: the spawn cwd and the system config paths. */
+interface ServerScope {
+  cwd: string | undefined;
+  systemConfigPaths: CodexSystemConfigPaths | null | undefined;
 }
 
 /** System, user and managed config servers, plus project-declared ones when `cwd` is known. */
-function configuredServers(cwd: string | undefined): ConfiguredServer[] {
-  const layers = readNonProjectLayers(readCodexConfig());
+function configuredServers({ cwd, systemConfigPaths }: ServerScope): ConfiguredServer[] {
+  const layers = readNonProjectLayers(readCodexConfig(), systemConfigPaths);
   const own = listNonProjectMcpServers(layers);
   if (cwd === undefined) return own;
   const project = listProjectMcpServers(
@@ -129,9 +145,9 @@ function configuredServers(cwd: string | undefined): ConfiguredServer[] {
 function disableNonRequiredServers(
   explicit: boolean,
   silent: boolean,
-  cwd: string | undefined,
+  scope: ServerScope,
 ): string[] {
-  const configured = configuredServers(cwd);
+  const configured = configuredServers(scope);
   if (explicit && !silent) {
     return buildMcpArgs(configured, new Set<string>());
   }
@@ -147,13 +163,13 @@ function rawTomlOverride(val: string): string[] {
  * Parse a comma-separated list of server names to enable.
  * Unknown names are warned (unless silent) and dropped.
  */
-function enableListedServers(val: string, silent: boolean, cwd: string | undefined): string[] {
+function enableListedServers(val: string, silent: boolean, scope: ServerScope): string[] {
   const requested = val
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const configured = configuredServers(cwd);
+  const configured = configuredServers(scope);
   const configuredNames = new Set(configured.map((s) => s.name));
 
   const enabled = new Set<string>();

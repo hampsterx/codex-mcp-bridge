@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => ({
@@ -6,6 +7,10 @@ const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => 
   verifyDirectoryMock: vi.fn<(dir: string) => Promise<string>>(),
   readFilesMock: vi.fn<(files: string[], rootDir: string) => Promise<Array<{ path: string; content: string; skipped?: string }>>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,

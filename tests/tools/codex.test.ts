@@ -2,12 +2,17 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 import { sessionStore } from "../../src/utils/session.js";
 
 const { spawnCodexMock } = vi.hoisted(() => ({
   spawnCodexMock: vi.fn<(options: SpawnOptions) => Promise<SpawnResult>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
