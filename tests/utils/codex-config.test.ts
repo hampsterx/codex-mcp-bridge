@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import {
   readCodexConfig,
   listMcpServerNames,
@@ -732,6 +733,20 @@ describe("buildMcpArgs with project-only servers", () => {
 });
 
 describe("buildMcpArgs with names a -c key path cannot carry", () => {
+  it("encodes a hostile transport value so it parses back to itself", () => {
+    const command = 'a}b"c=d\\e,f\ng';
+    const args = buildMcpArgs([
+      { name: "p", required: false, projectTransport: { key: "command", value: command } },
+    ]);
+
+    expect(args).toEqual(["-c", 'mcp_servers={p={enabled=false, command="a}b\\"c=d\\\\e,f\\ng"}}']);
+    const [key, ...rest] = args[1]!.split("=");
+    expect(key).toBe("mcp_servers");
+    // Codex parses the value side as TOML; smol-toml stands in for it here.
+    const parsed = parseToml(`v = ${rest.join("=")}`) as { v: { p: { enabled: boolean; command: string } } };
+    expect(parsed.v.p).toEqual({ enabled: false, command });
+  });
+
   it("keeps the key path fixed at mcp_servers and quotes names inside the value", () => {
     const pwn = "pwn={command='/bin/true',enabled=true}#";
     const args = buildMcpArgs([

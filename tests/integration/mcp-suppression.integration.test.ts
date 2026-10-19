@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getMcpServerOverride } from "../../src/utils/env.js";
+import { tomlString } from "../../src/utils/codex-config.js";
 
 const runIntegration = process.env["CODEX_INTEGRATION"] === "1";
 const maybeIt = runIntegration ? it : it.skip;
@@ -112,6 +113,19 @@ describe("MCP suppression as Codex parses it", () => {
       expect(unsuppressed.get(name)?.enabled, `control: ${name} loads when trusted`).toBe(true);
     }
     expectSuppressed(listServers());
+  });
+
+  maybeIt("round-trips a hostile transport value through Codex's own parser", () => {
+    const command = 'a}b"c=d\\e,f\ng';
+    writeFileSync(
+      path.join(project, ".codex", "config.toml"),
+      `[mcp_servers.hostile]\ncommand = ${tomlString(command)}\n`,
+    );
+    setTrust(project, "trusted");
+
+    const hostile = listServers().get("hostile");
+    expect(hostile?.enabled).toBe(false);
+    expect(hostile?.transport?.command).toBe(command);
   });
 
   maybeIt("keeps the config loadable from an untrusted project", () => {
