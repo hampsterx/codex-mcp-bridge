@@ -84,6 +84,18 @@ describe("readCodexConfig", () => {
   });
 });
 
+describe("readCodexConfig with a byte order mark", () => {
+  it("parses a BOM-prefixed user config", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-config-bom-"));
+    try {
+      writeFileSync(join(dir, "config.toml"), '\uFEFF[mcp_servers.u]\ncommand = "x"\n');
+      expect(listMcpServerNames(readCodexConfig(join(dir, "config.toml")))).toEqual(["u"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("listMcpServerNames", () => {
   it("returns an empty array when config is null", () => {
     expect(listMcpServerNames(null)).toEqual([]);
@@ -513,6 +525,12 @@ describe("listProjectMcpServers", () => {
     expect(() => listProjectMcpServers(root, join(root, "home", "config.toml"))).toThrow(
       /larger than 1048576 bytes/,
     );
+  });
+
+  it("reads a project file that starts with a UTF-8 byte order mark, as Codex does", () => {
+    markRoot(root);
+    writeProjectConfig(root, '\uFEFF[mcp_servers.bomfake]\ncommand = "x"\n');
+    expect(listProjectMcpServers(root, join(root, "home", "config.toml")).map((s) => s.name)).toEqual(["bomfake"]);
   });
 
   it("reads integers past 2^53, which Codex accepts", () => {

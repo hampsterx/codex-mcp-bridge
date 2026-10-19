@@ -63,6 +63,16 @@ export interface McpTransport {
 const TOML_OPTIONS = { integersAsBigInt: "asNeeded" } as const;
 
 /**
+ * Parse a config file's text as Codex does: one leading U+FEFF (a UTF-8 byte
+ * order mark, which some editors write) is dropped first, since Codex loads a
+ * BOM-prefixed file and smol-toml rejects one. Every config reader goes
+ * through here.
+ */
+function parseConfigToml(text: string): CodexConfig {
+  return parseToml(text.startsWith("\uFEFF") ? text.slice(1) : text, TOML_OPTIONS) as CodexConfig;
+}
+
+/**
  * Resolve the path to the user's Codex config.toml.
  * Honors `CODEX_HOME`; falls back to `~/.codex`.
  */
@@ -91,7 +101,7 @@ export function readCodexConfig(path: string = resolveCodexConfigPath()): CodexC
   }
 
   try {
-    return parseToml(raw, TOML_OPTIONS) as CodexConfig;
+    return parseConfigToml(raw);
   } catch (err) {
     throw new Error(
       `codex-mcp-bridge: failed to parse ${path}: ${(err as Error).message}. ` +
@@ -432,7 +442,7 @@ function readSystemConfig(file: string): CodexConfig | null {
   const text = readProjectConfigText(file);
   if (text === null) return null;
   try {
-    return parseToml(text, TOML_OPTIONS) as CodexConfig;
+    return parseConfigToml(text);
   } catch (err) {
     throw projectConfigError(file, (err as Error).message.split("\n")[0] ?? "parse error");
   }
@@ -570,7 +580,7 @@ function readProjectServerTables(file: string): Array<[string, Record<string, un
   if (text === null) return [];
   let config: CodexConfig;
   try {
-    config = parseToml(text, TOML_OPTIONS) as CodexConfig;
+    config = parseConfigToml(text);
   } catch (err) {
     throw projectConfigError(file, (err as Error).message.split("\n")[0] ?? "parse error");
   }
