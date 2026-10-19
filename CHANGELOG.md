@@ -40,6 +40,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   force and, in the disable-all and selective-enable modes unless `silent`,
   warns at most once per direction per spawn (a quota fallback spawns twice). An empty `-c mcp_servers={}` still does not suppress anything on
   `codex-cli 0.163.0`, so per-server enumeration stays.
+- **Config files that start with a UTF-8 byte order mark, or hold an integer
+  past 2^53, no longer make the bridge refuse every call.** Codex accepts
+  both; the bridge's TOML parser rejected them, which for
+  `$CODEX_HOME/config.toml` failed every call outside `inherit`. The user,
+  system, managed and project readers now share one parse that drops a single
+  leading BOM and keeps large integers exact.
 
 ### Added
 

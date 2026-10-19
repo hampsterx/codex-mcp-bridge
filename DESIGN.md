@@ -117,7 +117,7 @@ Implemented in `src/utils/progress.ts`.
 
 ## Codex Internal MCP Server Control
 
-When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`), or in the `.codex/config.toml` of a trusted project around the spawn's working directory, would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
+When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`), in the system or managed config under `/etc/codex`, or in the `.codex/config.toml` of a trusted project around the spawn's working directory, would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
 
 ### Grammar
 
