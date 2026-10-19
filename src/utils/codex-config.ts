@@ -1,7 +1,9 @@
 /**
- * Read and parse the user's Codex CLI config (`$CODEX_HOME/config.toml` or
- * `~/.codex/config.toml`), plus any project `.codex/config.toml` above the
- * spawn's working directory, to enumerate configured MCP servers.
+ * Read and parse the Codex CLI config layers that can declare MCP servers, to
+ * enumerate them: the user config (`$CODEX_HOME/config.toml` or
+ * `~/.codex/config.toml`), the system and managed config (`/etc/codex` on
+ * Unix), and each project `.codex/config.toml` between the spawn's working
+ * directory and its project root.
  *
  * Used by `getMcpServerOverride()` to emit one `-c mcp_servers={...}` table
  * naming each server to disable. An empty `-c mcp_servers={}` silently
@@ -38,8 +40,9 @@ export interface ConfiguredServer {
   name: string;
   required: boolean;
   /**
-   * Set only for a server declared in a project `.codex/config.toml` and not
-   * in the user config. See `listProjectMcpServers()` for why it is carried.
+   * Set only for a server declared in a project `.codex/config.toml` and in
+   * none of the user, system or managed config. See `listProjectMcpServers()`
+   * for why it is carried.
    */
   projectTransport?: McpTransport;
 }
@@ -284,16 +287,16 @@ export function listProjectMcpServers(
 
 /**
  * Fold project-declared servers into the non-project list (user, system and
- * managed config; see `listNonProjectMcpServers`). A name the user
- * config already declares keeps the user entry unchanged, `required` included:
+ * managed config; see `listNonProjectMcpServers`). A name one of those
+ * already declares keeps its non-project entry unchanged, `required` included:
  * the project file may be one Codex never loaded, and an untrusted repository
- * must not be able to keep one of the user's servers running.
+ * must not be able to keep one of those servers running.
  */
 export function mergeProjectServers(
-  user: ConfiguredServer[],
+  nonProject: ConfiguredServer[],
   project: ConfiguredServer[],
 ): ConfiguredServer[] {
-  const byName = new Map(user.map((s) => [s.name, s]));
+  const byName = new Map(nonProject.map((s) => [s.name, s]));
   for (const server of project) {
     if (!byName.has(server.name)) byName.set(server.name, server);
   }
