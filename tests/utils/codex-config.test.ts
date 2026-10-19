@@ -342,7 +342,7 @@ describe("listProjectMcpServers", () => {
     writeProjectConfig(join(root, "repo"), '[mcp_servers.inner]\ncommand = "./serve.sh"\nrequired = true\n');
 
     expect(listProjectMcpServers(cwd, join(root, "home", "config.toml"))).toEqual([
-      // A project's required = true never exempts a server: only the user config's does.
+      // A project's required = true never exempts a server: only a user, system or managed config's does.
       { name: "inner", required: false, projectTransport: { key: "command", value: "./serve.sh" } },
       { name: "outer", required: false, projectTransport: { key: "url", value: "http://127.0.0.1:1/mcp" } },
     ]);

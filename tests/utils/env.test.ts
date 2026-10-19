@@ -565,7 +565,7 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     expect(override(undefined, { cwd: project, systemConfigPaths: null })[1]).not.toContain("sysfake");
   });
 
-  it("without cwd, only the user config is enumerated", () => {
+  it("without cwd, no project config is read", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     expect(override()).toEqual([
       "-c", "mcp_servers={playwright={enabled=false}, serena={enabled=false}}",

@@ -227,7 +227,8 @@ export function listMcpServerEnvValues(config: CodexConfig | null): string[] {
  * layers Codex loaded: an explicitly untrusted subdirectory's flag would
  * otherwise keep a trusted parent's server running. Disabling a server a
  * trusted project marks required starts cleanly (measured on codex-cli
- * 0.163.0); only the user config's `required` is honoured.
+ * 0.163.0); only the user, system or managed config's `required` is honoured
+ * (see `listNonProjectMcpServers`).
  *
  * Fails closed: a file on the walk that exists but cannot be read or parsed
  * throws (see `readProjectConfigText`), since Codex may load what the bridge

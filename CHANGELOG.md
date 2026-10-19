@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   the key path on `.` and `=` without unquoting, so a server named `my.server`
   (user or project config) made every call fail, and a crafted name could add
   an enabled server. A project's `required = true` never exempts a server from
-  suppression (only the user config's does), since the bridge cannot tell
+  suppression (only the user, system or managed config's does), since the bridge cannot tell
   which project layers Codex loaded. Project config files are read only if
   they are regular files of at most 1 MiB, opened non-blocking, so a FIFO or
   `/dev/zero` in a repository cannot stall the bridge; one that exists but
