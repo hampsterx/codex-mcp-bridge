@@ -96,6 +96,29 @@ describe("readCodexConfig with a byte order mark", () => {
   });
 });
 
+describe("integers past 2^53 outside project files", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-config-bigint-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("parses them in the user config, which Codex accepts", () => {
+    writeFileSync(join(dir, "config.toml"), '[mcp_servers.u]\ncommand = "x"\nstartup_timeout_ms = 9007199254740992\n');
+    expect(listMcpServerNames(readCodexConfig(join(dir, "config.toml")))).toEqual(["u"]);
+  });
+
+  it("parses them in the system config", () => {
+    const paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
+    writeFileSync(paths.system, '[mcp_servers.sys]\ncommand = "x"\nstartup_timeout_ms = 9007199254740992\n');
+    expect(listNonProjectMcpServers(readNonProjectLayers(null, paths)).map((s) => s.name)).toEqual(["sys"]);
+  });
+});
+
 describe("listMcpServerNames", () => {
   it("returns an empty array when config is null", () => {
     expect(listMcpServerNames(null)).toEqual([]);
