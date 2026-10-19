@@ -547,6 +547,28 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     }
   });
 
+  it("takes project_root_markers from the managed config over the user config", () => {
+    // The user config disables root detection; the managed config, which
+    // Codex merges last, restores it with .hg. Read without the managed layer,
+    // sub would be its own root and projfake would go unread.
+    delete process.env["CODEX_MCP_SERVERS"];
+    const home = join(project, "home");
+    mkdirSync(home);
+    writeFileSync(join(home, "config.toml"), "project_root_markers = []\n");
+    process.env["CODEX_HOME"] = home;
+    const system = join(project, "etc");
+    mkdirSync(system);
+    writeFileSync(join(system, "managed_config.toml"), 'project_root_markers = [".hg"]\n');
+    writeFileSync(join(project, ".hg"), "");
+    const sub = join(project, "sub");
+    mkdirSync(sub);
+    const paths = { system: join(system, "config.toml"), managed: join(system, "managed_config.toml") };
+
+    expect(override(undefined, { cwd: sub, systemConfigPaths: paths })[1]).toContain(
+      'projfake={enabled=false, command="./fake-mcp.sh"}',
+    );
+  });
+
   it("finds the project root from a system config's project_root_markers", () => {
     // No .git anywhere, so the default markers would make sub its own root
     // and projfake (declared at the project) would go unread and unsuppressed.

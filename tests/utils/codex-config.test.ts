@@ -96,7 +96,7 @@ describe("readCodexConfig with a byte order mark", () => {
   });
 });
 
-describe("integers past 2^53 outside project files", () => {
+describe("user and system config readers", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -115,6 +115,12 @@ describe("integers past 2^53 outside project files", () => {
   it("parses them in the system config", () => {
     const paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
     writeFileSync(paths.system, '[mcp_servers.sys]\ncommand = "x"\nstartup_timeout_ms = 9007199254740992\n');
+    expect(listNonProjectMcpServers(readNonProjectLayers(null, paths)).map((s) => s.name)).toEqual(["sys"]);
+  });
+
+  it("reads a system config that starts with a UTF-8 byte order mark", () => {
+    const paths = { system: join(dir, "config.toml"), managed: join(dir, "managed_config.toml") };
+    writeFileSync(paths.system, '\uFEFF[mcp_servers.sys]\ncommand = "x"\n');
     expect(listNonProjectMcpServers(readNonProjectLayers(null, paths)).map((s) => s.name)).toEqual(["sys"]);
   });
 });
