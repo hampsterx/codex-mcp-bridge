@@ -205,7 +205,7 @@ bare Codex CLI. Do not break it during refactors (see Release Footguns below).
 
 ## CI/CD
 
-- **ci.yml**: lint + typecheck + test + build on PRs (Node 18/20/22)
+- **ci.yml**: lint + typecheck + test + build on PRs (Node 20/22)
 - **publish.yml**: OIDC trusted publishing on `v*` tag push (lint + test + build + publish with provenance)
 
 ### Release Workflow

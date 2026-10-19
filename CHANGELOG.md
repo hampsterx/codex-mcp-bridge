@@ -69,6 +69,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `builtIn` rather than counted as a config mismatch, so the configured-vs-
   reported diff runs in both directions.
 
+### Changed
+
+- **Node 20 or later is now required** (`engines` is `>=20`, CI tests 20 and
+  22). Node 18 reached end of life in April 2025, and the test toolchain calls
+  `crypto.hash`, which Node 18 does not have.
+
 ## [0.9.1] - 2026-08-02
 
 ### Fixed

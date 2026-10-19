@@ -46,7 +46,7 @@
   },
   "homepage": "https://github.com/hampsterx/codex-mcp-bridge#readme",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
