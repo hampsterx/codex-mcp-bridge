@@ -547,6 +547,23 @@ describe("getMcpServerOverride with a project .codex/config.toml", () => {
     }
   });
 
+  it("finds the project root from a system config's project_root_markers", () => {
+    // No .git anywhere, so the default markers would make sub its own root
+    // and projfake (declared at the project) would go unread and unsuppressed.
+    delete process.env["CODEX_MCP_SERVERS"];
+    const system = join(project, "etc");
+    mkdirSync(system);
+    writeFileSync(join(system, "config.toml"), 'project_root_markers = [".hg"]\n');
+    writeFileSync(join(project, ".hg"), "");
+    const sub = join(project, "sub");
+    mkdirSync(sub);
+    const paths = { system: join(system, "config.toml"), managed: join(system, "managed_config.toml") };
+
+    expect(override(undefined, { cwd: sub, systemConfigPaths: paths })[1]).toContain(
+      'projfake={enabled=false, command="./fake-mcp.sh"}',
+    );
+  });
+
   it("reads servers and markers from the system config paths it is given", () => {
     delete process.env["CODEX_MCP_SERVERS"];
     const system = join(project, "etc");
