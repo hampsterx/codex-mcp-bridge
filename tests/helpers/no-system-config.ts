@@ -11,6 +11,12 @@ export const NO_SYSTEM_CONFIG = {
 };
 
 /**
+ * A `CODEX_HOME` that never exists. Tool tests set it rather than deleting the
+ * variable, which would send any config read to the host's `~/.codex`.
+ */
+export const NO_CODEX_HOME = join(process.cwd(), "tests", "fixtures", "no-codex-home");
+
+/**
  * The env module with `getMcpServerOverride` defaulting to `NO_SYSTEM_CONFIG`.
  * Tool tests reach it through the tool, which cannot pass the option, so they
  * install this with

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { withoutHostSystemConfig } from "../helpers/no-system-config.js";
+import { NO_CODEX_HOME, withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => ({
@@ -49,7 +49,7 @@ describe("executeStructured", () => {
     verifyDirectoryMock.mockResolvedValue("/repo");
     readFilesMock.mockResolvedValue([]);
     process.env["CODEX_MCP_SERVERS"] = "inherit";
-    delete process.env["CODEX_HOME"];
+    process.env["CODEX_HOME"] = NO_CODEX_HOME;
   });
 
   afterEach(() => {

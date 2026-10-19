@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withoutHostSystemConfig } from "../helpers/no-system-config.js";
+import { NO_CODEX_HOME, withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 import { sessionStore } from "../../src/utils/session.js";
 
@@ -29,7 +29,7 @@ const origCodexHome = process.env["CODEX_HOME"];
 
 beforeEach(() => {
   process.env["CODEX_MCP_SERVERS"] = "inherit";
-  delete process.env["CODEX_HOME"];
+  process.env["CODEX_HOME"] = NO_CODEX_HOME;
 });
 
 afterEach(() => {
