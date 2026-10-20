@@ -1,11 +1,18 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_CODEX_HOME, withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 import { sessionStore } from "../../src/utils/session.js";
 
 const { spawnCodexMock } = vi.hoisted(() => ({
   spawnCodexMock: vi.fn<(options: SpawnOptions) => Promise<SpawnResult>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
@@ -22,7 +29,7 @@ const origCodexHome = process.env["CODEX_HOME"];
 
 beforeEach(() => {
   process.env["CODEX_MCP_SERVERS"] = "inherit";
-  delete process.env["CODEX_HOME"];
+  process.env["CODEX_HOME"] = NO_CODEX_HOME;
 });
 
 afterEach(() => {
@@ -471,5 +478,35 @@ describe("executeCodex", () => {
     expect(stored).toBeDefined();
     expect(stored!.conversationId).toBe("new_thread");
     expect(stored!.turnCount).toBe(1); // reset: previous deleted, fresh start
+  });
+});
+
+describe("executeCodex MCP suppression", () => {
+  let project: string;
+
+  beforeEach(async () => {
+    project = await realpath(await mkdtemp(join(tmpdir(), "codex-tool-project-")));
+    await mkdir(join(project, ".codex"));
+    await writeFile(
+      join(project, ".codex", "config.toml"),
+      '[mcp_servers.projfake]\ncommand = "./fake-mcp.sh"\n',
+      "utf8",
+    );
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(project, "no-codex-home");
+    spawnCodexMock.mockReset();
+    spawnCodexMock.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
+  });
+
+  afterEach(async () => {
+    await rm(project, { recursive: true, force: true });
+  });
+
+  it("disables servers from the workingDirectory's own .codex/config.toml", async () => {
+    await executeCodex({ prompt: "hi", workingDirectory: project });
+
+    const { args, cwd } = spawnCodexMock.mock.calls[0]![0];
+    expect(cwd).toBe(project);
+    expect(args).toContain('mcp_servers={projfake={enabled=false, command="./fake-mcp.sh"}}');
   });
 });

@@ -170,6 +170,14 @@ config can quietly overrule it, and config that overrules a security flag fails
 open. Anything added here that grants a capability should be checked for a
 config key that can widen it.
 
+## MCP Server Suppression Scope
+
+To disable a server that only a project file declares, the bridge re-states that file's own `command` or `url` in its `-c mcp_servers={...}` override, and the file may belong to a repository Codex does not trust. That is safe only while three things hold: the re-stated transport always travels with `enabled=false` in the same table entry; a project-only server named in the enable list gets no entry at all, leaving it to Codex's trust gate; and a name the user, system or managed config declares is never read from a project file. A change that emits `enabled=true` next to a re-stated transport hands a repository a command for Codex to run, which is code execution, not a configuration tweak.
+
+The bridge finds a project's root, and so which `.codex/config.toml` files to suppress servers from, using `project_root_markers` from the user, system and Unix managed config files, but not from macOS managed preferences or enterprise cloud config bundles, so an organisation that sets markers only there can leave servers in an ancestor's project config unsuppressed (see [DESIGN.md](DESIGN.md#project-declared-servers)).
+
+Managed config (`/etc/codex/managed_config.toml`) is admin policy that Codex applies above every CLI override, so the bridge can neither suppress a server it enables nor enable one it disables, and runs the call as policy dictates. In the disable-all and selective-enable modes, unless `silent`, it warns on stderr, at most once per direction per spawn; raw TOML and `inherit` modes do not warn.
+
 ## Output Redaction
 
 CLI output is scanned for sensitive patterns before being returned to the MCP client:

@@ -50,7 +50,7 @@ export async function executeSearch(input: SearchInput): Promise<SearchResult> {
     (m, t) => {
       // codex --search exec --skip-git-repo-check "prompt"
       // --search goes before exec subcommand
-      const args: string[] = ["--search", "exec", ...getMcpServerOverride()];
+      const args: string[] = ["--search", "exec", ...getMcpServerOverride(undefined, { cwd })];
       if (m) args.push(`--model=${m}`);
       // Search synthesizes web results and has no reason to touch the tree.
       // It declared no level at all before, which left the sandbox to user

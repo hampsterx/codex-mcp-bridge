@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { NO_CODEX_HOME, withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => ({
@@ -6,6 +10,10 @@ const { spawnCodexMock, verifyDirectoryMock, readFilesMock } = vi.hoisted(() => 
   verifyDirectoryMock: vi.fn<(dir: string) => Promise<string>>(),
   readFilesMock: vi.fn<(files: string[], rootDir: string) => Promise<Array<{ path: string; content: string; skipped?: string }>>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
@@ -41,7 +49,7 @@ describe("executeStructured", () => {
     verifyDirectoryMock.mockResolvedValue("/repo");
     readFilesMock.mockResolvedValue([]);
     process.env["CODEX_MCP_SERVERS"] = "inherit";
-    delete process.env["CODEX_HOME"];
+    process.env["CODEX_HOME"] = NO_CODEX_HOME;
   });
 
   afterEach(() => {
@@ -121,5 +129,40 @@ describe("executeStructured", () => {
     })).rejects.toThrow("does not support image files");
 
     expect(spawnCodexMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("executeStructured MCP suppression", () => {
+  const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+  const origCodexHome = process.env["CODEX_HOME"];
+  let project: string;
+
+  beforeEach(() => {
+    project = realpathSync(mkdtempSync(join(tmpdir(), "codex-structured-project-")));
+    mkdirSync(join(project, ".codex"));
+    writeFileSync(join(project, ".codex", "config.toml"), '[mcp_servers.projfake]\ncommand = "./fake-mcp.sh"\n');
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(project, "no-codex-home");
+    verifyDirectoryMock.mockResolvedValue(project);
+    readFilesMock.mockResolvedValue([]);
+    spawnCodexMock.mockReset();
+    spawnCodexMock.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
+  });
+
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true });
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  it("disables servers from the workingDirectory's own .codex/config.toml", async () => {
+    // Only the spawn is under test; the result may not parse.
+    await executeStructured({ prompt: "p", schema: JSON.stringify({ type: "object" }), workingDirectory: project }).catch(() => undefined);
+
+    const { args, cwd } = spawnCodexMock.mock.calls[0]![0];
+    expect(cwd).toBe(project);
+    expect(args).toContain('mcp_servers={projfake={enabled=false, command="./fake-mcp.sh"}}');
   });
 });

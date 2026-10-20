@@ -152,8 +152,10 @@ Fire-and-forget (silent on unsupported clients). Implemented in `src/utils/progr
 
 ### `CODEX_MCP_SERVERS` grammar
 
-Controls which MCP servers from `~/.codex/config.toml` stay enabled inside
-the Codex subprocess. Branches evaluated top-to-bottom:
+Controls which MCP servers from `~/.codex/config.toml`, and from any project
+`.codex/config.toml` between the spawn's working directory and its project
+root (as Codex resolves it from `project_root_markers`), stay enabled
+inside the Codex subprocess. Branches evaluated top-to-bottom:
 
 1. **unset / empty / whitespace** → disable every configured server except
    those marked `required = true` in config.toml.
@@ -168,8 +170,26 @@ Per-tool defaults: all tools currently use disable-all. The `codex` tool
 inherits from the `CODEX_MCP_SERVERS` env var; explicit caller params win
 over env var wins over tool default.
 
-The `required` flag (codex PR #10902) is read straight from `config.toml`
-and cannot be disabled by any caller. Parsed synchronously, no per-spawn
+The `required` flag (codex PR #10902) is read straight from the user,
+system (`/etc/codex/config.toml`) or managed config, last setter winning,
+and cannot be disabled by any caller. A project `.codex/config.toml`'s
+`required` never exempts a server. Servers those three declare are disabled
+by name; project declarations of the same name are ignored.
+
+A project config that exists but cannot be enumerated (special file, over
+1 MiB, unreadable, unparseable) refuses the spawn with an error pointing at
+`CODEX_MCP_SERVERS=inherit`, which reads no config.
+
+All of it is emitted as one `-c mcp_servers={...}` inline table with names
+quoted inside the value, never `-c mcp_servers.NAME...`: Codex's `-c` key
+path splits on `.` and `=` without unquoting. A non-empty table merges into
+the loaded config; only the empty one no-ops (#16045).
+
+Project-only servers are disabled with their own `command`/`url` re-stated,
+because a bare `enabled=false` for a server Codex did not load (untrusted
+project) makes Codex refuse to start. Named in the enable list, they get no
+override and run only if Codex trusted the project. Rationale: DESIGN.md §
+Project-declared servers. Parsed synchronously, no per-spawn
 subprocess cost. The grammar narrowed in this release: old builds accepted
 any non-empty non-`inherit` value as raw TOML; now only values starting with
 `{` or `[` do. Unreleased env var, non-breaking.
@@ -185,7 +205,7 @@ bare Codex CLI. Do not break it during refactors (see Release Footguns below).
 
 ## CI/CD
 
-- **ci.yml**: lint + typecheck + test + build on PRs (Node 18/20/22)
+- **ci.yml**: lint + typecheck + test + build on PRs (Node 20/22)
 - **publish.yml**: OIDC trusted publishing on `v*` tag push (lint + test + build + publish with provenance)
 
 ### Release Workflow

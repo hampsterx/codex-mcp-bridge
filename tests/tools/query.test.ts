@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { NO_CODEX_HOME, withoutHostSystemConfig } from "../helpers/no-system-config.js";
 import type { SpawnOptions, SpawnResult } from "../../src/utils/spawn.js";
 
 const { spawnCodexMock, mkdtempMock, rmMock } = vi.hoisted(() => ({
@@ -6,6 +10,10 @@ const { spawnCodexMock, mkdtempMock, rmMock } = vi.hoisted(() => ({
   mkdtempMock: vi.fn<(prefix: string) => Promise<string>>(),
   rmMock: vi.fn<(path: string, options?: object) => Promise<void>>(),
 }));
+
+vi.mock("../../src/utils/env.js", async (importOriginal) =>
+  withoutHostSystemConfig(await importOriginal<typeof import("../../src/utils/env.js")>()),
+);
 
 vi.mock("../../src/utils/spawn.js", () => ({
   spawnCodex: spawnCodexMock,
@@ -34,7 +42,7 @@ describe("executeQuery", () => {
     mkdtempMock.mockResolvedValue("/tmp/codex-query-abc123");
     rmMock.mockResolvedValue(undefined);
     process.env["CODEX_MCP_SERVERS"] = "inherit";
-    delete process.env["CODEX_HOME"];
+    process.env["CODEX_HOME"] = NO_CODEX_HOME;
   });
 
   afterEach(() => {
@@ -217,5 +225,41 @@ describe("executeQuery", () => {
     const call = spawnCodexMock.mock.calls[0]![0];
     expect(call.stdin).toContain("general question");
     expect(call.stdin).toContain("No additional context provided");
+  });
+});
+
+describe("executeQuery MCP suppression", () => {
+  const origMcpEnv = process.env["CODEX_MCP_SERVERS"];
+  const origCodexHome = process.env["CODEX_HOME"];
+  let project: string;
+
+  beforeEach(() => {
+    project = realpathSync(mkdtempSync(join(tmpdir(), "codex-query-project-")));
+    mkdirSync(join(project, ".codex"));
+    writeFileSync(join(project, ".codex", "config.toml"), '[mcp_servers.projfake]\ncommand = "./fake-mcp.sh"\n');
+    delete process.env["CODEX_MCP_SERVERS"];
+    process.env["CODEX_HOME"] = join(project, "no-codex-home");
+    // query spawns in the directory mkdtemp returns, and removes it after.
+    mkdtempMock.mockResolvedValue(project);
+    rmMock.mockResolvedValue(undefined);
+    spawnCodexMock.mockReset();
+    spawnCodexMock.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
+  });
+
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true });
+    if (origMcpEnv === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcpEnv;
+    if (origCodexHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origCodexHome;
+  });
+
+  it("disables servers from its spawn directory's own .codex/config.toml", async () => {
+    // Only the spawn is under test; the result may not parse.
+    await executeQuery({ prompt: "p" }).catch(() => undefined);
+
+    const { args, cwd } = spawnCodexMock.mock.calls[0]![0];
+    expect(cwd).toBe(project);
+    expect(args).toContain('mcp_servers={projfake={enabled=false, command="./fake-mcp.sh"}}');
   });
 });

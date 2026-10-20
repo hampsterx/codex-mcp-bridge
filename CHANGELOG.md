@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP servers declared in a trusted project's `.codex/config.toml` are now
+  suppressed too.** Codex loads that layer for a trusted working directory,
+  and the bridge only enumerated
+  `$CODEX_HOME/config.toml`, so a project server booted on every `codex`,
+  `search` or `structured` call made inside that project, regardless of
+  `CODEX_MCP_SERVERS`. The bridge now reads every `.codex/config.toml` from the
+  working directory up to the project root, found the way Codex finds it
+  (`project_root_markers`, default `.git`, a linked worktree's `.git` file
+  included), and disables those servers as well, re-stating each one's own `command` or `url` so the override stays
+  valid when the project is untrusted and Codex never loaded it. Trust rules
+  are not reproduced. A project-only server named in `CODEX_MCP_SERVERS` is no
+  longer reported as unknown; it is left to Codex's own trust gate rather than
+  force-enabled. Overrides are now emitted as one `-c mcp_servers={...}` inline
+  table with server names quoted inside the value: Codex's `-c` parser splits
+  the key path on `.` and `=` without unquoting, so a server named `my.server`
+  (user or project config) made every call fail, and a crafted name could add
+  an enabled server. A project's `required = true` never exempts a server from
+  suppression (only the user, system or managed config's does), since the bridge cannot tell
+  which project layers Codex loaded. Project config files are read only if
+  they are regular files of at most 1 MiB, opened non-blocking, so a FIFO or
+  `/dev/zero` in a repository cannot stall the bridge; one that exists but
+  cannot be enumerated refuses the call with an error naming it, pointing at
+  `CODEX_MCP_SERVERS=inherit`, rather than letting its servers start. So do
+  two project files declaring one server with different transport kinds.
+  `project_root_markers` is read from the system and managed config files as
+  well as the user config, with Codex's precedence (`~` and `~/` markers
+  expanded as Codex expands them), and servers those files declare are
+  suppressed like user servers. Managed config outranks `-c`, so where it
+  sets `enabled` against the bridge's override the bridge leaves the policy in
+  force and, in the disable-all and selective-enable modes unless `silent`,
+  warns at most once per direction per spawn (a quota fallback spawns twice). An empty `-c mcp_servers={}` still does not suppress anything on
+  `codex-cli 0.163.0`, so per-server enumeration stays.
+- **Config files that start with a UTF-8 byte order mark, or hold an integer
+  past 2^53, no longer make the bridge refuse every call.** Codex accepts
+  both; the bridge's TOML parser rejected them, which for
+  `$CODEX_HOME/config.toml` failed every call outside `inherit`. The user,
+  system, managed and project readers now share one parse that drops a single
+  leading BOM and keeps large integers exact.
+
 ### Added
 
 - **`mcpStatus` tool: per-server MCP boot state, sourced from Codex's own
@@ -27,6 +68,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   was observed. And **servers Codex injects itself** (`codex_apps`) are labelled
   `builtIn` rather than counted as a config mismatch, so the configured-vs-
   reported diff runs in both directions.
+
+### Changed
+
+- **Node 20 or later is now required** (`engines` is `>=20`, CI tests 20 and
+  22). Node 18 reached end of life in April 2025, and the test toolchain calls
+  `crypto.hash`, which Node 18 does not have.
 
 ## [0.9.1] - 2026-08-02
 

@@ -117,7 +117,7 @@ Implemented in `src/utils/progress.ts`.
 
 ## Codex Internal MCP Server Control
 
-When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`) would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
+When the bridge spawns Codex, any MCP servers configured in `~/.codex/config.toml` (`[mcp_servers.*]`), in the system or managed config under `/etc/codex`, or in the `.codex/config.toml` of a trusted project around the spawn's working directory, would otherwise load inside Codex and add 30-120s of startup overhead per call. The `CODEX_MCP_SERVERS` env var controls which servers stay enabled.
 
 ### Grammar
 
@@ -136,11 +136,43 @@ All tools use disable-all by default. The `codex` tool inherits from the `CODEX_
 
 ### Required servers
 
-Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required = true` flag under `[mcp_servers.NAME]`. When set, the bridge refuses to disable that server regardless of `CODEX_MCP_SERVERS` value, and emits a warning to stderr.
+Codex PR [#10902](https://github.com/openai/codex/pull/10902) added a `required = true` flag under `[mcp_servers.NAME]`. When set in the user, system (`/etc/codex/config.toml`) or managed (`/etc/codex/managed_config.toml`) config, the last of those setting it winning as Codex's merge does, the bridge refuses to disable that server regardless of `CODEX_MCP_SERVERS` value, and emits a warning to stderr. A project `.codex/config.toml` cannot grant that exemption: the bridge cannot tell which project layers Codex loaded, and an explicitly untrusted subdirectory's `required = true` would otherwise keep a trusted parent's server running. Disabling a server a trusted project marks required starts cleanly (measured on `codex-cli 0.163.0`).
 
-### Why per-server enumeration?
+### Why per-server enumeration, in one table?
 
-A blanket `-c mcp_servers={}` override silently no-ops on older Codex versions: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045)). Per-server `enabled=false` is the only reliable disable path.
+An empty `-c mcp_servers={}` override silently no-ops: config merging preserves the existing server table rather than replacing it (upstream [openai/codex#16045](https://github.com/openai/codex/issues/16045), still true on `codex-cli 0.163.0`, for user and project servers alike). The same merge is what makes a **non-empty** table work: `-c 'mcp_servers={drop={enabled=false}, keep={enabled=true}}'` merges into the loaded tables, so `keep` keeps its own `command` and `args` and an omitted `required` server is untouched (measured on 0.163.0). So the bridge names every server, in one inline table:
+
+```
+-c mcp_servers={github={enabled=false}, "my.server"={enabled=false}, serena={enabled=true}}
+```
+
+Names go inside the value, never in the `-c` key path. Codex's `-c` parser splits the argument on the first `=` and the path on `.` without unquoting, so a quoted key in the path arrives as literal characters: `mcp_servers."my.server".enabled=false` creates a server called `"my` with no transport and Codex refuses to start, and a name like `x={command='...',enabled=true}#` injected an enabled server. The value side is parsed as real TOML, so any name round-trips.
+
+### Project-declared servers
+
+Codex loads `[mcp_servers.*]` from a project's `.codex/config.toml` (each directory between the working directory and the project root) when the project is trusted in user config. Trust is matched on the directory itself, the project root (nearest `.git` by default) or the repository root, so trusting a parent such as `/home/me` covers its non-repository subdirectories but not a separate repository below it.
+
+The bridge does not reproduce the trust decision. Every spawning tool passes its working directory, and the bridge reads every `.codex/config.toml` from its realpath (Codex sees the physical path) up to the project root, found as Codex's `discover_project_root` finds it: the nearest ancestor holding any of `project_root_markers` (default `[".git"]`; a linked worktree's `.git` file counts, a `.git` directory only with a `HEAD`; an absolute marker is checked as given, as Rust's `Path::join` replaces the base with it, and so is `~` or `~/rest` once expanded against the home directory, as Codex's `AbsolutePathBuf::join` expands them (`~user` is left alone); an empty array, or no marker found, means the working directory alone). That is a superset of what any trust decision loads, and it stops where Codex stops: a file above the root, such as a world-writable `/tmp/.codex/config.toml` over a checkout in `/tmp`, is never loaded by Codex and is not read. Over-enumerating within the root is safe only because of how each project-only server is disabled:
+
+```
+-c mcp_servers={NAME={enabled=false, command="<its own command>"}}
+```
+
+A bare `enabled=false` for a server Codex did not load (an untrusted project) creates a table with no transport, and Codex refuses to start with `invalid transport`. Re-stating the server's own `command` or `url` keeps the table valid whether or not the layer loaded; the other transport kind fails with `url is not supported for stdio`. A disabled server never spawns, so this cannot start anything the trust gate kept off.
+
+Servers declared in the system or managed config are handled like user servers: always loaded, disabled by name, and any project declaration of the same name is ignored, conflict check included, since re-stating a project file's transport over theirs makes Codex refuse to start when the kinds differ. `project_root_markers` is resolved with Codex's precedence as far as the bridge can see it: `/etc/codex/managed_config.toml` over the user config over `/etc/codex/config.toml`, the last layer setting it winning, each system file read through the same bounded, fail-closed reader as a project file. Managed configuration that is not a file (macOS managed preferences, enterprise cloud config bundles) and the Windows system config are not read, so a marker set only there can still put the bridge's root somewhere other than Codex's.
+
+Where several project files declare one server, the transport comes from the nearest, as Codex merges nearer layers on top. If they disagree on its kind (`command` in one, `url` in another), the spawn is refused with an error naming both files: the bridge cannot tell which layer Codex loads, and re-stating the wrong kind makes Codex refuse to start (`url is not supported for stdio`). Project files are read only if they are regular files (a symlink to one is followed, as Codex follows it) of at most 1 MiB, checked before and after a non-blocking open, because the bridge reads them synchronously before any subprocess timeout starts and a FIFO or `/dev/zero` would otherwise stall or exhaust it. Integers are parsed losslessly, since Codex accepts values past 2^53. The `query` tool spawns in a fresh directory under the OS temp dir and walks from there like any other tool, so on a host where an ancestor of that directory is a project root (for example `/tmp/.git` exists), a malformed `.codex/config.toml` in that ancestor fails `query` closed too; `CODEX_MCP_SERVERS=inherit` is the workaround.
+
+**Enumeration fails closed.** A project file that exists on the walk but is rejected (not a regular file, over the cap, unreadable, unparseable) refuses the spawn with an error naming the file, because Codex may load it and its servers would then start unsuppressed. An absent file is a no-op, and `CODEX_MCP_SERVERS=inherit` reads no config at all, so it is the escape hatch. The same holds when the override would exceed Linux's 128 KiB limit on one argument: a clear error instead of a raw `E2BIG` from the spawn.
+
+**Managed config is admin policy above every CLI override.** Codex merges `/etc/codex/managed_config.toml` on top of `-c` (its loader: "Managed config wins over CLI config"), so a managed `enabled = true` keeps a server running whatever the bridge emits, and a managed `enabled = false` keeps one off even when the caller asks to enable it. The bridge does not fight that or refuse the call: it emits the same argv, and in the disable-all and selective-enable modes, unless `silent`, it prints at most one warning per direction per spawn (so up to two), naming the servers managed config keeps on and those it keeps off. Raw TOML and `inherit` modes read no config and print no such warning.
+
+Enumeration and Codex's own load are separate reads, so a config changed between them is not covered. That race is not closable from outside Codex.
+
+A project file never changes how a server the user config also declares is handled, `required` included, since that file may be one Codex did not load.
+
+A project-only server named in the selective-enable list gets no override at all. `enabled=true` alone breaks startup when the project is untrusted, and with a transport it would start a server Codex declined to load. It runs only when Codex loaded it and its own config leaves it enabled.
 
 ## Prompt Templates
 

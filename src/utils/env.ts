@@ -6,7 +6,20 @@
  * risks leaking unintended config).
  */
 
-import { readCodexConfig, listMcpServers, buildMcpArgs } from "./codex-config.js";
+import {
+  readCodexConfig,
+  readNonProjectLayers,
+  listNonProjectMcpServers,
+  markersFromLayers,
+  listProjectMcpServers,
+  mergeProjectServers,
+  resolveCodexConfigPath,
+  resolveSystemConfigPaths,
+  managedEnabledFlags,
+  buildMcpArgs,
+  type CodexSystemConfigPaths,
+  type ConfiguredServer,
+} from "./codex-config.js";
 
 const ALLOWED_ENV_KEYS = [
   // OpenAI / Codex auth
@@ -38,10 +51,13 @@ const ALLOWED_ENV_KEYS = [
  *
  *   1. unset / empty / whitespace-only → disable every configured server
  *      except those marked `required=true` (default, fastest). Enumerates
- *      per-server via `-c mcp_servers.NAME.enabled=false`. A blanket
- *      `mcp_servers={}` override silently no-ops on older Codex due to
- *      config-merge semantics (upstream #16045), so enumeration is the
- *      only reliable path.
+ *      each server into one `-c mcp_servers={NAME={enabled=false}, ...}`
+ *      table (see `buildMcpArgs`). An empty `mcp_servers={}` override
+ *      silently no-ops due to config-merge semantics (upstream #16045,
+ *      still true on Codex 0.163.0), so enumeration is the only reliable
+ *      path. "Configured" covers the user
+ *      config and, when `cwd` is given, project `.codex/config.toml` files
+ *      above it (see `listProjectMcpServers`).
  *
  *      Truly unset (no `override`, no env var) stays silent about required
  *      servers being kept on. An **explicit** empty/whitespace value —
@@ -73,10 +89,21 @@ const ALLOWED_ENV_KEYS = [
  *                  required" warnings. Set by callers passing an implicit
  *                  tool default so users who never asked for a list don't
  *                  get yelled at for the bridge's internal preferences.
+ * @param options.cwd  Working directory the subprocess will spawn in. Every
+ *                  spawning tool passes it; without it, servers declared in a
+ *                  trusted project's `.codex/config.toml` boot unsuppressed.
+ * @param options.systemConfigPaths  System and managed config files to read
+ *                  (see `readNonProjectLayers`). Omitted means Codex's real
+ *                  `/etc/codex` paths (none on Windows); `null` reads neither.
+ *                  Tools never pass it; it exists so tests stay off the host.
  */
 export function getMcpServerOverride(
   override?: string,
-  { silent = false }: { silent?: boolean } = {},
+  {
+    silent = false,
+    cwd,
+    systemConfigPaths,
+  }: { silent?: boolean; cwd?: string; systemConfigPaths?: CodexSystemConfigPaths | null } = {},
 ): string[] {
   const envValue = process.env["CODEX_MCP_SERVERS"];
   // "Explicit" means the caller or the env var provided a value (even if it's
@@ -85,10 +112,80 @@ export function getMcpServerOverride(
   const raw = override !== undefined ? override : envValue;
   const val = raw?.trim() ?? "";
 
-  if (val === "") return disableNonRequiredServers(explicit, silent);
+  const scope: ServerScope = { cwd, systemConfigPaths };
+  if (val === "") return disableNonRequiredServers(explicit, silent, scope);
   if (val === "inherit") return [];
   if (val[0] === "{" || val[0] === "[") return rawTomlOverride(val);
-  return enableListedServers(val, silent);
+  return enableListedServers(val, silent, scope);
+}
+
+/** Where `configuredServers` looks: the spawn cwd and the system config paths. */
+interface ServerScope {
+  cwd: string | undefined;
+  systemConfigPaths: CodexSystemConfigPaths | null | undefined;
+}
+
+/** System, user and managed config servers, plus project-declared ones when `cwd` is known. */
+function configuredServers({ cwd, systemConfigPaths }: ServerScope): ConfiguredServers {
+  const paths = resolveSystemConfigPaths(systemConfigPaths);
+  const layers = readNonProjectLayers(readCodexConfig(), paths);
+  const managed = paths
+    ? { file: paths.managed, enabled: managedEnabledFlags(layers[layers.length - 1] ?? null) }
+    : { file: "", enabled: new Map<string, boolean>() };
+  const own = listNonProjectMcpServers(layers);
+  if (cwd === undefined) return { servers: own, managed };
+  const project = listProjectMcpServers(
+    cwd,
+    resolveCodexConfigPath(),
+    markersFromLayers(layers),
+    new Set(own.map((s) => s.name)),
+  );
+  return { servers: mergeProjectServers(own, project), managed };
+}
+
+/** Configured servers, plus the managed config's `enabled` values, which outrank `-c`. */
+interface ConfiguredServers {
+  servers: ConfiguredServer[];
+  managed: { file: string; enabled: ReadonlyMap<string, boolean> };
+}
+
+/**
+ * Warn when the managed config will overrule the override `buildMcpArgs`
+ * emits. Codex merges managed config above `-c` overrides: it is admin policy,
+ * so the bridge neither fights it nor refuses the call, and the argv is the
+ * same either way. One warning per direction per spawn, naming every server:
+ * servers the bridge disables that managed config keeps enabled, and servers
+ * the caller asked to enable that managed config keeps disabled.
+ */
+function warnManagedOverrides(
+  { servers, managed }: ConfiguredServers,
+  enabled: ReadonlySet<string> | undefined,
+  silent: boolean,
+): void {
+  if (silent || managed.enabled.size === 0) return;
+  const keptOn: string[] = [];
+  const keptOff: string[] = [];
+  for (const { name, required, projectTransport } of servers) {
+    const policy = managed.enabled.get(name);
+    if (enabled?.has(name)) {
+      if (!projectTransport && policy === false) keptOff.push(name);
+    } else if (!required && policy === true) {
+      keptOn.push(name);
+    }
+  }
+  const list = (names: string[]): string => names.map((n) => `'${n}'`).join(", ");
+  if (keptOn.length > 0) {
+    console.warn(
+      `codex-mcp-bridge: managed config ${managed.file} keeps MCP server(s) ${list(keptOn)} enabled; ` +
+      `it outranks the bridge's -c overrides, so they will start despite being disabled here`,
+    );
+  }
+  if (keptOff.length > 0) {
+    console.warn(
+      `codex-mcp-bridge: managed config ${managed.file} keeps MCP server(s) ${list(keptOff)} disabled; ` +
+      `it outranks the bridge's -c overrides, so the request to enable them has no effect`,
+    );
+  }
 }
 
 /**
@@ -96,12 +193,17 @@ export function getMcpServerOverride(
  * When `explicit` is true and `silent` is false, warnings are emitted
  * for required servers that cannot be disabled.
  */
-function disableNonRequiredServers(explicit: boolean, silent: boolean): string[] {
-  const configured = listMcpServers(readCodexConfig());
+function disableNonRequiredServers(
+  explicit: boolean,
+  silent: boolean,
+  scope: ServerScope,
+): string[] {
+  const configured = configuredServers(scope);
+  warnManagedOverrides(configured, undefined, silent);
   if (explicit && !silent) {
-    return buildMcpArgs(configured, new Set<string>());
+    return buildMcpArgs(configured.servers, new Set<string>());
   }
-  return buildMcpArgs(configured);
+  return buildMcpArgs(configured.servers);
 }
 
 /** Pass raw TOML through as a `-c` flag. */
@@ -113,15 +215,14 @@ function rawTomlOverride(val: string): string[] {
  * Parse a comma-separated list of server names to enable.
  * Unknown names are warned (unless silent) and dropped.
  */
-function enableListedServers(val: string, silent: boolean): string[] {
+function enableListedServers(val: string, silent: boolean, scope: ServerScope): string[] {
   const requested = val
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const config = readCodexConfig();
-  const configured = listMcpServers(config);
-  const configuredNames = new Set(configured.map((s) => s.name));
+  const configured = configuredServers(scope);
+  const configuredNames = new Set(configured.servers.map((s) => s.name));
 
   const enabled = new Set<string>();
   const warnedUnknowns = new Set<string>();
@@ -136,7 +237,8 @@ function enableListedServers(val: string, silent: boolean): string[] {
     }
   }
 
-  return buildMcpArgs(configured, enabled, { silent });
+  warnManagedOverrides(configured, enabled, silent);
+  return buildMcpArgs(configured.servers, enabled, { silent });
 }
 
 /**

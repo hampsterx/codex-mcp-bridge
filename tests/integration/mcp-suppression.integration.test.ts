@@ -1,0 +1,213 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getMcpServerOverride } from "../../src/utils/env.js";
+import { tomlString } from "../../src/utils/codex-config.js";
+
+const runIntegration = process.env["CODEX_INTEGRATION"] === "1";
+const maybeIt = runIntegration ? it : it.skip;
+
+interface ListedServer {
+  name: string;
+  enabled: boolean;
+  transport?: { command?: string; args?: string[] };
+}
+
+/**
+ * The unit tests assert the argv the bridge emits; these assert what Codex
+ * makes of it, by reading back its parsed config with `codex mcp list --json`
+ * (which loads the same user and project layers as `exec` without starting
+ * any server). That is the only way to check the security property: names
+ * from an untrusted repository cannot reshape the `mcp_servers` table.
+ */
+describe("MCP suppression as Codex parses it", () => {
+  let root: string;
+  let home: string;
+  let project: string;
+  const origHome = process.env["CODEX_HOME"];
+  const origMcp = process.env["CODEX_MCP_SERVERS"];
+
+  const adversarial = ["a.b", "a=b", 'q"x', "pwn={command='/bin/true',enabled=true}#", "ünï"];
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "codex-mcp-suppression-")));
+    home = path.join(root, "home");
+    project = path.join(root, "proj");
+    mkdirSync(home);
+    mkdirSync(path.join(project, ".codex"), { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: project });
+
+    writeFileSync(
+      path.join(home, "config.toml"),
+      [
+        '[mcp_servers.keep]\ncommand = "/bin/false"\nargs = ["keep-arg"]\nenabled = false',
+        '[mcp_servers.drop]\ncommand = "/bin/false"',
+        '[mcp_servers.req]\ncommand = "/bin/false"\nrequired = true',
+      ].join("\n\n"),
+    );
+    writeFileSync(
+      path.join(project, ".codex", "config.toml"),
+      adversarial
+        .map((name) => `[mcp_servers.${JSON.stringify(name)}]\ncommand = "/bin/false"`)
+        .join("\n\n"),
+    );
+
+    process.env["CODEX_HOME"] = home;
+    process.env["CODEX_MCP_SERVERS"] = "keep";
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    if (origHome === undefined) delete process.env["CODEX_HOME"];
+    else process.env["CODEX_HOME"] = origHome;
+    if (origMcp === undefined) delete process.env["CODEX_MCP_SERVERS"];
+    else process.env["CODEX_MCP_SERVERS"] = origMcp;
+  });
+
+  /**
+   * `codex mcp list --json` under the temp home, run from `cwd`; throws if
+   * Codex rejects the config. `suppress: false` is the negative control: the
+   * same call with no bridge override, to show what Codex loads on its own.
+   */
+  function listServers(suppress = true, cwd = project): Map<string, ListedServer> {
+    const override = suppress ? getMcpServerOverride(undefined, { cwd }) : [];
+    const args = ["mcp", "list", "--json", ...override];
+    const out = execFileSync("codex", args, {
+      cwd,
+      encoding: "utf8",
+      env: { ...process.env, CODEX_HOME: home },
+      timeout: 60_000,
+    });
+    return new Map((JSON.parse(out) as ListedServer[]).map((s) => [s.name, s]));
+  }
+
+  function expectSuppressed(servers: Map<string, ListedServer>): void {
+    // Enabled on request, keeping its own transport: the table merged.
+    expect(servers.get("keep")?.enabled).toBe(true);
+    expect(servers.get("keep")?.transport?.args).toEqual(["keep-arg"]);
+    expect(servers.get("drop")?.enabled).toBe(false);
+    expect(servers.get("req")?.enabled).toBe(true);
+    for (const name of adversarial) {
+      expect(servers.get(name)?.enabled, name).toBe(false);
+    }
+    // Nothing named after a fragment of a split key path.
+    const expected = new Set(["keep", "drop", "req", ...adversarial]);
+    expect([...servers.keys()].filter((n) => !expected.has(n))).toEqual([]);
+  }
+
+  /** Append a `[projects."dir"]` trust entry to the temp user config. */
+  function setTrust(dir: string, level: "trusted" | "untrusted"): void {
+    writeFileSync(
+      path.join(home, "config.toml"),
+      `\n\n[projects.${JSON.stringify(dir)}]\ntrust_level = "${level}"\n`,
+      { flag: "a" },
+    );
+  }
+
+  maybeIt("disables every project server, whatever its name, in a trusted project", () => {
+    setTrust(project, "trusted");
+    const unsuppressed = listServers(false);
+    for (const name of adversarial) {
+      expect(unsuppressed.get(name)?.enabled, `control: ${name} loads when trusted`).toBe(true);
+    }
+    expectSuppressed(listServers());
+  });
+
+  maybeIt("round-trips a hostile transport value through Codex's own parser", () => {
+    const command = 'a}b"c=d\\e,f\ng';
+    writeFileSync(
+      path.join(project, ".codex", "config.toml"),
+      `[mcp_servers.hostile]\ncommand = ${tomlString(command)}\n`,
+    );
+    setTrust(project, "trusted");
+
+    const hostile = listServers().get("hostile");
+    expect(hostile?.enabled).toBe(false);
+    expect(hostile?.transport?.command).toBe(command);
+  });
+
+  maybeIt("keeps the config loadable from an untrusted project", () => {
+    const unsuppressed = listServers(false);
+    for (const name of adversarial) {
+      expect(unsuppressed.has(name), `control: ${name} absent when untrusted`).toBe(false);
+    }
+    expectSuppressed(listServers());
+  });
+
+  for (const [label, parentDecl, childDecl] of [
+    ["trusted parent url, untrusted child command", 'url = "http://127.0.0.1:9/mcp"', 'command = "/bin/false"'],
+    ["trusted parent command, untrusted child url", 'command = "/bin/false"', 'url = "http://127.0.0.1:9/mcp"'],
+  ] as const) {
+    maybeIt(`refuses with the named error when layers disagree on transport kind: ${label}`, () => {
+      writeFileSync(path.join(project, ".codex", "config.toml"), `[mcp_servers.shared]\n${parentDecl}\n`);
+      const sub = path.join(project, "sub");
+      mkdirSync(path.join(sub, ".codex"), { recursive: true });
+      writeFileSync(path.join(sub, ".codex", "config.toml"), `[mcp_servers.shared]\n${childDecl}\n`);
+      setTrust(project, "trusted");
+      setTrust(sub, "untrusted");
+
+      // Control: Codex alone loads the parent's server and ignores the child.
+      expect(listServers(false, sub).get("shared")?.enabled).toBe(true);
+      // Re-stating the child's kind would make Codex refuse to start, so the
+      // bridge refuses first, naming both files.
+      expect(() => getMcpServerOverride(undefined, { cwd: sub })).toThrow(
+        /'shared' is declared with `(command|url)` here and `(command|url)` in .*CODEX_MCP_SERVERS=inherit/,
+      );
+    });
+  }
+
+  maybeIt("leaves a user server's transport to the user config when project layers disagree on it", () => {
+    writeFileSync(path.join(home, "config.toml"), '\n\n[mcp_servers.shared]\ncommand = "/bin/false"\n', { flag: "a" });
+    writeFileSync(path.join(project, ".codex", "config.toml"), '[mcp_servers.shared]\ncommand = "/bin/false"\n');
+    const sub = path.join(project, "sub");
+    mkdirSync(path.join(sub, ".codex"), { recursive: true });
+    writeFileSync(path.join(sub, ".codex", "config.toml"), '[mcp_servers.shared]\nurl = "http://127.0.0.1:9/mcp"\n');
+    setTrust(project, "trusted");
+    setTrust(sub, "untrusted");
+
+    expect(listServers(false, sub).get("shared")?.enabled, "control: shared loads").toBe(true);
+    process.env["CODEX_MCP_SERVERS"] = "";
+    expect(listServers(true, sub).get("shared")?.enabled).toBe(false);
+    process.env["CODEX_MCP_SERVERS"] = "shared";
+    expect(listServers(true, sub).get("shared")?.enabled).toBe(true);
+  });
+
+  maybeIt("does not read an ancestor's project config when a ~ marker makes cwd the root", () => {
+    // A literal `~` directory at the project root: Codex expands the marker
+    // to $HOME, which exists, so the root is cwd and `anc` never loads.
+    const userConfig = path.join(home, "config.toml");
+    // Top-level key, so it goes before the existing tables.
+    writeFileSync(userConfig, `project_root_markers = ["~"]\n\n${readFileSync(userConfig, "utf8")}`);
+    writeFileSync(path.join(project, ".codex", "config.toml"), '[mcp_servers.anc]\nurl = "http://127.0.0.1:9/mcp"\n');
+    mkdirSync(path.join(project, "~"));
+    const sub = path.join(project, "sub");
+    mkdirSync(path.join(sub, ".codex"), { recursive: true });
+    writeFileSync(path.join(sub, ".codex", "config.toml"), '[mcp_servers.anc]\ncommand = "/bin/false"\n');
+    setTrust(project, "trusted");
+    setTrust(sub, "trusted");
+
+    // Control: Codex loads only the sub layer, so `anc` is the stdio one.
+    expect(listServers(false, sub).get("anc")?.transport?.command).toBe("/bin/false");
+    // Walking up to the literal `~` would see the parent's `url` and refuse.
+    expect(listServers(true, sub).get("anc")?.enabled).toBe(false);
+  });
+
+  maybeIt("disables a trusted root's server that an untrusted subdirectory marks required", () => {
+    // Codex drops the untrusted sub layer, so the root's `shared` loads as an
+    // ordinary server; the sub's required flag must not exempt it.
+    writeFileSync(
+      path.join(project, ".codex", "config.toml"),
+      '[mcp_servers.shared]\ncommand = "/bin/false"\n',
+    );
+    const sub = path.join(project, "sub");
+    mkdirSync(path.join(sub, ".codex"), { recursive: true });
+    writeFileSync(path.join(sub, ".codex", "config.toml"), "[mcp_servers.shared]\nrequired = true\n");
+    setTrust(project, "trusted");
+    setTrust(sub, "untrusted");
+
+    expect(listServers(false, sub).get("shared")?.enabled, "control: shared loads").toBe(true);
+    expect(listServers(true, sub).get("shared")?.enabled).toBe(false);
+  });
+});

@@ -142,7 +142,7 @@ No parameters. Returns CLI version, auth status, model configuration, and concur
 
 ### mcpStatus
 
-Reports per-server MCP state as Codex's own `app-server` protocol sees it. Unlike every other tool, it deliberately does **not** suppress Codex's MCP servers or harden the subprocess environment, because both would disable the thing being measured. It therefore boots the servers in `~/.codex/config.toml` and is slower than a normal call.
+Reports per-server MCP state as Codex's own `app-server` protocol sees it. Unlike every other tool, it deliberately does **not** suppress Codex's MCP servers or harden the subprocess environment, because both would disable the thing being measured. It therefore boots the servers in `~/.codex/config.toml` and is slower than a normal call. With `diagnostics: true` and a `workingDirectory` inside a trusted project, the thread it starts also boots that project's `.codex/config.toml` servers.
 
 Key parameters: `diagnostics` (default `false`), `workingDirectory`, `timeout` (per-request, default 90s).
 
